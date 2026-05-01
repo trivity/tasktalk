@@ -1,0 +1,17 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 5
+
+[[services]]
+name = "tasktalk-web"
+[services.envs]
+PROCESS_ROLE = "web"
+
+[[services]]
+name = "tasktalk-worker"
+[services.envs]
+PROCESS_ROLE = "worker"

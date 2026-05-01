@@ -171,3 +171,42 @@ export const cuMembers = pgTable(
   },
   (t) => ({ wsIdx: index('cu_members_ws_idx').on(t.workspaceId) }),
 );
+
+export const conversations = pgTable(
+  'conversations',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    title: text('title').notNull().default('New conversation'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    lastMessageAt: timestamp('last_message_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({ userIdx: index('conversations_user_idx').on(t.userId, t.lastMessageAt) }),
+);
+
+export const messages = pgTable(
+  'messages',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    conversationId: uuid('conversation_id').notNull().references(() => conversations.id, { onDelete: 'cascade' }),
+    role: text('role', { enum: ['user', 'assistant', 'tool', 'system_event'] }).notNull(),
+    content: jsonb('content').$type<unknown>().notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({ convIdx: index('messages_conv_idx').on(t.conversationId, t.createdAt) }),
+);
+
+export const toolCalls = pgTable(
+  'tool_calls',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    messageId: uuid('message_id').notNull().references(() => messages.id, { onDelete: 'cascade' }),
+    toolName: text('tool_name').notNull(),
+    args: jsonb('args').$type<Record<string, unknown>>().notNull().default({}),
+    result: jsonb('result').$type<unknown>(),
+    routerPath: text('router_path', { enum: ['snapshot', 'live', 'snapshot · live-fallback', 'none'] }).notNull().default('none'),
+    latencyMs: integer('latency_ms').notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({ msgIdx: index('tool_calls_msg_idx').on(t.messageId) }),
+);

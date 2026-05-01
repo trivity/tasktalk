@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, timestamp, boolean, index, uniqueIndex } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, timestamp, boolean, integer, bigint, index, uniqueIndex, jsonb, primaryKey, date } from 'drizzle-orm/pg-core';
 
 export const users = pgTable(
   'users',
@@ -53,4 +53,121 @@ export const clickupConnections = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({ userIdx: index('cu_conn_user_idx').on(t.userId) }),
+);
+
+export const cuWorkspaces = pgTable('cu_workspaces', {
+  workspaceId: text('workspace_id').primaryKey(),
+  name: text('name').notNull(),
+  lastFullSyncAt: timestamp('last_full_sync_at', { withTimezone: true }),
+  lastIncrementalSyncAt: timestamp('last_incremental_sync_at', { withTimezone: true }),
+  lastDriftCount: integer('last_drift_count').notNull().default(0),
+  syncState: jsonb('sync_state').$type<{ phase?: string; listsDone?: number; listsTotal?: number }>().notNull().default({}),
+});
+
+export const cuSpaces = pgTable(
+  'cu_spaces',
+  {
+    id: text('id').primaryKey(),
+    workspaceId: text('workspace_id').notNull().references(() => cuWorkspaces.workspaceId, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    archived: boolean('archived').notNull().default(false),
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  },
+  (t) => ({ wsIdx: index('cu_spaces_ws_idx').on(t.workspaceId) }),
+);
+
+export const cuFolders = pgTable(
+  'cu_folders',
+  {
+    id: text('id').primaryKey(),
+    workspaceId: text('workspace_id').notNull(),
+    spaceId: text('space_id').notNull().references(() => cuSpaces.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    archived: boolean('archived').notNull().default(false),
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  },
+  (t) => ({ wsIdx: index('cu_folders_ws_idx').on(t.workspaceId), spaceIdx: index('cu_folders_space_idx').on(t.spaceId) }),
+);
+
+export const cuLists = pgTable(
+  'cu_lists',
+  {
+    id: text('id').primaryKey(),
+    workspaceId: text('workspace_id').notNull(),
+    spaceId: text('space_id'),
+    folderId: text('folder_id'),
+    name: text('name').notNull(),
+    archived: boolean('archived').notNull().default(false),
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  },
+  (t) => ({ wsIdx: index('cu_lists_ws_idx').on(t.workspaceId) }),
+);
+
+export const cuTasks = pgTable(
+  'cu_tasks',
+  {
+    taskId: text('task_id').primaryKey(),
+    workspaceId: text('workspace_id').notNull(),
+    listId: text('list_id').notNull(),
+    parentTaskId: text('parent_task_id'),
+    name: text('name').notNull(),
+    description: text('description'),
+    status: text('status'),
+    priority: integer('priority'),
+    dueDate: date('due_date'),
+    startDate: date('start_date'),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    timeEstimate: bigint('time_estimate', { mode: 'number' }),
+    timeSpent: bigint('time_spent', { mode: 'number' }),
+    assignees: jsonb('assignees').$type<Array<{ id: string; name?: string; email?: string }>>().notNull().default([]),
+    tags: jsonb('tags').$type<string[]>().notNull().default([]),
+    updatedAtClickup: timestamp('updated_at_clickup', { withTimezone: true }).notNull(),
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  },
+  (t) => ({
+    wsListStatusIdx: index('cu_tasks_ws_list_status_idx').on(t.workspaceId, t.listId, t.status),
+    wsDueIdx: index('cu_tasks_ws_due_idx').on(t.workspaceId, t.dueDate),
+    wsCompletedIdx: index('cu_tasks_ws_completed_idx').on(t.workspaceId, t.completedAt),
+    updatedIdx: index('cu_tasks_updated_idx').on(t.updatedAtClickup),
+    assigneesIdx: index('cu_tasks_assignees_gin_idx').using('gin', t.assignees),
+  }),
+);
+
+export const cuCustomFields = pgTable(
+  'cu_custom_fields',
+  {
+    customFieldId: text('custom_field_id').primaryKey(),
+    workspaceId: text('workspace_id').notNull(),
+    scopeId: text('scope_id').notNull(),
+    scopeType: text('scope_type', { enum: ['list', 'folder', 'space'] }).notNull(),
+    name: text('name').notNull(),
+    type: text('type').notNull(),
+    config: jsonb('config').$type<Record<string, unknown>>().notNull().default({}),
+  },
+  (t) => ({ scopeIdx: index('cu_cf_scope_idx').on(t.scopeId) }),
+);
+
+export const cuTaskCustomFieldValues = pgTable(
+  'cu_task_custom_field_values',
+  {
+    taskId: text('task_id').notNull().references(() => cuTasks.taskId, { onDelete: 'cascade' }),
+    customFieldId: text('custom_field_id').notNull().references(() => cuCustomFields.customFieldId, { onDelete: 'cascade' }),
+    value: jsonb('value').$type<unknown>(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.taskId, t.customFieldId] }),
+    cfIdx: index('cu_cfv_cf_idx').on(t.customFieldId),
+  }),
+);
+
+export const cuMembers = pgTable(
+  'cu_members',
+  {
+    memberId: text('member_id').primaryKey(),
+    workspaceId: text('workspace_id').notNull().references(() => cuWorkspaces.workspaceId, { onDelete: 'cascade' }),
+    name: text('name'),
+    email: text('email'),
+    role: text('role'),
+  },
+  (t) => ({ wsIdx: index('cu_members_ws_idx').on(t.workspaceId) }),
 );

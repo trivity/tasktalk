@@ -8,6 +8,13 @@
       "when": 1777646513584,
       "tag": "0000_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1777658954455,
+      "tag": "0001_milky_clea",
+      "breakpoints": true
     }
   ]
 }

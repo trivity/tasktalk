@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../lib/rpc.js';
+import { ThemeToggle } from '../components/ui/ThemeToggle.js';
 
 export function Settings() {
   const [user, setUser] = useState<{ email: string; name: string | null; isAdmin: boolean } | null>(null);
@@ -55,6 +56,14 @@ export function Settings() {
         ) : (
           <a href="/api/clickup/connect" className="bg-[#7c6ef7] text-white rounded-md px-4 py-2 text-sm">Connect ClickUp</a>
         )}
+      </section>
+
+      <section className="bg-[#181b22] border border-[#2a2f3d] rounded-xl p-6">
+        <h2 className="font-semibold mb-2">Appearance</h2>
+        <div className="flex items-center gap-3">
+          <span className="text-sm text-[#9298ac]">Theme</span>
+          <ThemeToggle />
+        </div>
       </section>
 
       {user.isAdmin && (

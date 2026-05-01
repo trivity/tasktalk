@@ -4,6 +4,18 @@ import { Hono } from 'hono';
 import { env } from './env.js';
 import { authRoutes } from './auth/routes.js';
 import { clickupOauthRoutes } from './routes/clickup-oauth.js';
+import {
+  getBoss,
+  QUEUE_INITIAL_SYNC,
+  QUEUE_SYNC_TASK,
+  QUEUE_DRIFT,
+  type InitialSyncPayload,
+  type SyncTaskPayload,
+  type DriftPayload,
+} from './sync/boss.js';
+import { runInitialSync } from './sync/initial-sync.js';
+import { runSyncTask } from './sync/sync-task.js';
+import { runDrift } from './sync/drift.js';
 
 async function startWeb() {
   const app = new Hono();
@@ -16,8 +28,13 @@ async function startWeb() {
 }
 
 async function startWorker() {
-  console.log('[worker] starting (no jobs registered yet)');
-  process.stdin.resume();
+  const boss = await getBoss();
+  await boss.work<InitialSyncPayload>(QUEUE_INITIAL_SYNC, { batchSize: 1 }, async ([job]) => { await runInitialSync(job!.data); });
+  await boss.work<SyncTaskPayload>(QUEUE_SYNC_TASK, { batchSize: 5 }, async (jobs) => { for (const j of jobs) await runSyncTask(j.data); });
+  await boss.work<DriftPayload>(QUEUE_DRIFT, { batchSize: 1 }, async ([job]) => { await runDrift(job!.data); });
+  await boss.schedule(QUEUE_DRIFT, '0 4 * * *', { workspaceId: 'ALL' }, { tz: 'UTC' });
+  console.log('[worker] pg-boss workers registered');
+  process.on('SIGTERM', async () => { await boss.stop({ graceful: true }); process.exit(0); });
 }
 
 if (env.PROCESS_ROLE === 'web') void startWeb();

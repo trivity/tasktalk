@@ -24,6 +24,13 @@ export function Chat() {
 
   useEffect(() => { void loadHistory(); }, [loadHistory]);
 
+  useEffect(() => {
+    if (!id) return;
+    const es = new EventSource(`/api/conversations/${id}/events`, { withCredentials: true } as any);
+    es.addEventListener('system_event', () => { void loadHistory(); });
+    return () => es.close();
+  }, [id, loadHistory]);
+
   async function newConv() {
     const r = await api.createConversation();
     await refreshConvs();
@@ -34,6 +41,11 @@ export function Chat() {
     setHistory((h) => [...h, { id: `optimistic-${Date.now()}`, role: 'user', content: { text }, createdAt: new Date().toISOString() }]);
     await send(text, () => { void loadHistory(); void refreshConvs(); });
   }
+
+  const onConfirmResolved = useCallback(() => {
+    void loadHistory();
+    void refreshConvs();
+  }, [loadHistory, refreshConvs]);
 
   return (
     <div className="flex h-screen bg-[#0a0b0f] text-[#e8eaf0]">
@@ -51,7 +63,7 @@ export function Chat() {
             <header className="border-b border-[#2a2f3d] px-6 py-3 text-sm text-[#9298ac]">
               {conversations.find((c) => c.id === id)?.title ?? 'Conversation'}
             </header>
-            <MessageStream history={history} streaming={streaming} />
+            <MessageStream history={history} streaming={streaming} onConfirmResolved={onConfirmResolved} />
             <Composer disabled={!!streaming && !streaming.done} onSend={onSend} />
           </>
         )}

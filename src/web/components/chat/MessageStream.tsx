@@ -1,4 +1,6 @@
 import { ToolCallPill } from './ToolCallPill.js';
+import { ConfirmCard, type Preview } from './ConfirmCard.js';
+import { SystemEventNote } from './SystemEventNote.js';
 import type { StreamMessage } from '../../hooks/use-message-stream.js';
 
 type PersistedMessage = { id: string; role: string; content: any };
@@ -6,9 +8,10 @@ type PersistedMessage = { id: string; role: string; content: any };
 type Props = {
   history: PersistedMessage[];
   streaming: StreamMessage | null;
+  onConfirmResolved: () => void;
 };
 
-export function MessageStream({ history, streaming }: Props) {
+export function MessageStream({ history, streaming, onConfirmResolved }: Props) {
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-4">
       {history.map((m) => {
@@ -30,10 +33,7 @@ export function MessageStream({ history, streaming }: Props) {
         }
         if (m.role === 'system_event') {
           return (
-            <div key={m.id} className="bg-[#60a5fa]/[.07] border-l-2 border-[#60a5fa] rounded px-3 py-1.5 text-[12px] text-[#c9cdd9]">
-              <span className="text-[#60a5fa] font-bold mr-2">●</span>
-              {m.content?.text ?? '(system event)'}
-            </div>
+            <SystemEventNote key={m.id} text={m.content?.text ?? '(system event)'} />
           );
         }
         return null;
@@ -47,6 +47,9 @@ export function MessageStream({ history, streaming }: Props) {
           )}
           {streaming.text}
           {!streaming.done && <span className="inline-block w-2 h-4 bg-[#7c6ef7] ml-1 animate-pulse" />}
+          {streaming.pendingConfirmations.map((p) => (
+            <ConfirmCard key={p.token} preview={p.preview as Preview} token={p.token} onResolved={onConfirmResolved} />
+          ))}
         </div>
       )}
     </div>

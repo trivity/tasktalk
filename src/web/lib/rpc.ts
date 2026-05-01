@@ -36,4 +36,13 @@ export const api = {
   listMessages: (id: string) => request<{ messages: Array<{ id: string; role: string; content: any; createdAt: string }> }>(`/api/conversations/${id}/messages`),
   deleteConversation: (id: string) => request<{ ok: true }>(`/api/conversations/${id}`, { method: 'DELETE' }),
   renameConversation: (id: string, title: string) => request<{ ok: true }>(`/api/conversations/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title }) }),
+  confirmWrite: (token: string, confirm: boolean) => fetch('/api/confirm-write', {
+    method: 'POST', credentials: 'include',
+    headers: { 'content-type': 'application/json', accept: 'text/event-stream' },
+    body: JSON.stringify({ confirmation_token: token, confirm }),
+  }),
+  undoLast: (conversationId: string) => fetch(`/api/undo/${conversationId}`, {
+    method: 'POST', credentials: 'include',
+    headers: { accept: 'text/event-stream' },
+  }),
 };

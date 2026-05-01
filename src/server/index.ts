@@ -14,6 +14,7 @@ import {
   QUEUE_INITIAL_SYNC,
   QUEUE_SYNC_TASK,
   QUEUE_DRIFT,
+  QUEUE_TOMBSTONE_PURGE,
   type InitialSyncPayload,
   type SyncTaskPayload,
   type DriftPayload,
@@ -21,6 +22,7 @@ import {
 import { runInitialSync } from './sync/initial-sync.js';
 import { runSyncTask } from './sync/sync-task.js';
 import { runDrift } from './sync/drift.js';
+import { runTombstonePurge } from './sync/tombstone-purge.js';
 
 async function startWeb() {
   const app = new Hono();
@@ -43,6 +45,8 @@ async function startWorker() {
   await boss.work<SyncTaskPayload>(QUEUE_SYNC_TASK, { batchSize: 5 }, async (jobs) => { for (const j of jobs) await runSyncTask(j.data); });
   await boss.work<DriftPayload>(QUEUE_DRIFT, { batchSize: 1 }, async ([job]) => { await runDrift(job!.data); });
   await boss.schedule(QUEUE_DRIFT, '0 4 * * *', { workspaceId: 'ALL' }, { tz: 'UTC' });
+  await boss.work(QUEUE_TOMBSTONE_PURGE, { batchSize: 1 }, async () => { await runTombstonePurge(); });
+  await boss.schedule(QUEUE_TOMBSTONE_PURGE, '0 5 * * *', {}, { tz: 'UTC' });
   console.log('[worker] pg-boss workers registered');
   process.on('SIGTERM', async () => { await boss.stop({ graceful: true }); process.exit(0); });
 }

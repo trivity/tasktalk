@@ -18,6 +18,7 @@ export async function stopBoss(): Promise<void> {
 export const QUEUE_INITIAL_SYNC = 'initial-sync';
 export const QUEUE_SYNC_TASK = 'sync-task';
 export const QUEUE_DRIFT = 'drift-reconcile';
+export const QUEUE_TOMBSTONE_PURGE = 'tombstone-purge';
 
 export type InitialSyncPayload = { userId: string };
 export type SyncTaskPayload = { workspaceId: string; taskId: string };

@@ -23,7 +23,7 @@ export function decryptToken(payload: string, keyHex: string): string {
   const key = keyFromHex(keyHex);
   const parts = payload.split('.');
   if (parts.length !== 3) throw new Error('malformed ciphertext');
-  const [ivHex, encHex, tagHex] = parts;
+  const [ivHex, encHex, tagHex] = parts as [string, string, string];
   const iv = Buffer.from(ivHex, 'hex');
   const enc = Buffer.from(encHex, 'hex');
   const tag = Buffer.from(tagHex, 'hex');

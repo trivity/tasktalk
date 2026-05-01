@@ -210,3 +210,44 @@ export const toolCalls = pgTable(
   },
   (t) => ({ msgIdx: index('tool_calls_msg_idx').on(t.messageId) }),
 );
+
+export const pendingWrites = pgTable(
+  'pending_writes',
+  {
+    confirmationToken: uuid('confirmation_token').defaultRandom().primaryKey(),
+    userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    conversationId: uuid('conversation_id').notNull().references(() => conversations.id, { onDelete: 'cascade' }),
+    toolUseId: text('tool_use_id').notNull(),
+    toolName: text('tool_name').notNull(),
+    args: jsonb('args').$type<Record<string, unknown>>().notNull(),
+    preview: jsonb('preview').$type<unknown>().notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    consumedAt: timestamp('consumed_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({ userIdx: index('pending_writes_user_idx').on(t.userId, t.expiresAt) }),
+);
+
+export const auditLog = pgTable(
+  'audit_log',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    conversationId: uuid('conversation_id').notNull().references(() => conversations.id, { onDelete: 'cascade' }),
+    messageId: uuid('message_id').references(() => messages.id, { onDelete: 'set null' }),
+    action: text('action', { enum: ['create_task', 'update_task', 'add_comment', 'delete_task', 'undo'] }).notNull(),
+    targetType: text('target_type', { enum: ['task', 'comment'] }).notNull(),
+    targetId: text('target_id').notNull(),
+    before: jsonb('before').$type<unknown>(),
+    after: jsonb('after').$type<unknown>(),
+    status: text('status', { enum: ['pending', 'ok', 'failed'] }).notNull().default('pending'),
+    errorMessage: text('error_message'),
+    undone: boolean('undone').notNull().default(false),
+    undoTargetId: uuid('undo_target_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    userIdx: index('audit_log_user_idx').on(t.userId, t.createdAt),
+    convIdx: index('audit_log_conv_idx').on(t.conversationId, t.createdAt),
+  }),
+);

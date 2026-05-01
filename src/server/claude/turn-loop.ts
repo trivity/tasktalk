@@ -1,10 +1,12 @@
 import type Anthropic from '@anthropic-ai/sdk';
+import { randomUUID } from 'node:crypto';
 import { anthropic, CLAUDE_MODEL, MAX_TURN_ITERATIONS } from './client.js';
-import { ANTHROPIC_TOOLS } from './tools-registry.js';
+import { ANTHROPIC_TOOLS, WRITE_TOOL_NAMES } from './tools-registry.js';
 import { executeTool, type ExecuteToolResult } from './execute-tool.js';
+import { buildPreview } from './preview.js';
 import { TurnMcpPool } from '../mcp/client.js';
 import { db } from '../db/client.js';
-import { messages, toolCalls, cuWorkspaces } from '../db/schema.js';
+import { messages, toolCalls, cuWorkspaces, pendingWrites } from '../db/schema.js';
 import { eq, sql } from 'drizzle-orm';
 import { buildSystemPrompt } from './system-prompt.js';
 import { bumpLastMessageAt } from '../db/queries/conversations.js';
@@ -14,6 +16,7 @@ export type TurnEvent =
   | { type: 'text_delta'; text: string }
   | { type: 'tool_use_start'; tool_name: string; tool_use_id: string }
   | { type: 'tool_use_complete'; tool_use_id: string; router_path: string; latency_ms: number; ok: boolean }
+  | { type: 'needs_confirmation'; tool_use_id: string; tool_name: string; confirmation_token: string; preview: unknown }
   | { type: 'message_complete' }
   | { type: 'error'; error: string };
 
@@ -104,10 +107,13 @@ export async function runTurn(opts: {
         return;
       }
 
-      // execute tools and append results to apiMessages, then continue loop
-      apiMessages.push({ role: 'assistant', content: finalMessage.content });
+      // partition into reads vs writes — writes pause the turn for user confirmation
+      const reads = pendingToolUses.filter((tu) => !WRITE_TOOL_NAMES.has(tu.name));
+      const writes = pendingToolUses.filter((tu) => WRITE_TOOL_NAMES.has(tu.name));
+
+      // execute reads as before (they don't need confirmation)
       const toolResultsBlock: Anthropic.MessageParam = { role: 'user', content: [] };
-      for (const tu of pendingToolUses) {
+      for (const tu of reads) {
         await opts.emit({ type: 'tool_use_start', tool_name: tu.name, tool_use_id: tu.id });
         const result = await executeTool({ name: tu.name, args: tu.input, workspaceId: opts.workspaceId, pool });
         await opts.emit({ type: 'tool_use_complete', tool_use_id: tu.id, router_path: result.routerPath, latency_ms: result.latencyMs, ok: result.ok });
@@ -119,6 +125,64 @@ export async function runTurn(opts: {
           is_error: !result.ok,
         });
       }
+
+      // for each write, build preview, mint token, persist pending_writes, and emit needs_confirmation
+      for (const tu of writes) {
+        let preview: unknown;
+        try {
+          preview = await buildPreview({ workspaceId: opts.workspaceId, toolName: tu.name, args: tu.input });
+        } catch (e) {
+          const errMsg = String((e as Error).message ?? e);
+          (toolResultsBlock.content as any[]).push({
+            type: 'tool_result',
+            tool_use_id: tu.id,
+            content: `preview_error: ${errMsg}`,
+            is_error: true,
+          });
+          continue;
+        }
+        const token = randomUUID();
+        await db.insert(pendingWrites).values({
+          confirmationToken: token,
+          userId: opts.userId,
+          conversationId: opts.conversationId,
+          toolUseId: tu.id,
+          toolName: tu.name,
+          args: tu.input,
+          preview,
+          expiresAt: new Date(Date.now() + 5 * 60 * 1000),
+        });
+        await opts.emit({ type: 'needs_confirmation', tool_use_id: tu.id, tool_name: tu.name, confirmation_token: token, preview });
+      }
+
+      // if any writes were proposed, end the turn here. The confirm-write route will resume.
+      if (writes.length > 0) {
+        const allToolUses = [
+          ...collectedToolUses.map((t) => ({ id: t.id, name: t.name, input: t.input })),
+          ...writes.map((w) => ({ id: w.id, name: w.name, input: w.input })),
+        ];
+        const [m] = await db.insert(messages).values({
+          conversationId: opts.conversationId,
+          role: 'assistant',
+          content: { text: assistantTextBuffer, tool_uses: allToolUses },
+        }).returning();
+        assistantMsgId = m!.id;
+        for (const tu of collectedToolUses) {
+          await db.insert(toolCalls).values({
+            messageId: assistantMsgId,
+            toolName: tu.name,
+            args: tu.input,
+            result: tu.result.ok ? (tu.result.result as Record<string, unknown> | unknown) : { error: tu.result.error },
+            routerPath: tu.result.routerPath,
+            latencyMs: tu.result.latencyMs,
+          });
+        }
+        await opts.emit({ type: 'message_complete' });
+        return;
+      }
+
+      // no writes — append results and continue loop
+      apiMessages.push({ role: 'assistant', content: finalMessage.content });
       apiMessages.push(toolResultsBlock);
     }
 

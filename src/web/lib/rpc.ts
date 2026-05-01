@@ -45,4 +45,10 @@ export const api = {
     method: 'POST', credentials: 'include',
     headers: { accept: 'text/event-stream' },
   }),
+  estimateWorkspace: () => request<{ approxTaskCount: number; listCount: number }>('/api/onboarding/estimate'),
+  syncProgress: () => request<{
+    status: 'pending' | 'running' | 'done';
+    syncState?: { phase?: string; listsDone?: number; listsTotal?: number };
+    workspace?: { id: string; name: string };
+  }>('/api/onboarding/sync-progress'),
 };

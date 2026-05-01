@@ -5,6 +5,7 @@ import { env } from './env.js';
 import { authRoutes } from './auth/routes.js';
 import { clickupOauthRoutes } from './routes/clickup-oauth.js';
 import { webhookRoutes } from './routes/webhooks.js';
+import { conversationRoutes } from './routes/conversations.js';
 import {
   getBoss,
   QUEUE_INITIAL_SYNC,
@@ -24,6 +25,7 @@ async function startWeb() {
   app.route('/api/auth', authRoutes);
   app.route('/api/clickup', clickupOauthRoutes);
   app.route('/api/webhooks', webhookRoutes);
+  app.route('/api/conversations', conversationRoutes);
   serve({ fetch: app.fetch, port: 3000 }, (info) => {
     console.log(`[web] listening on http://localhost:${info.port}`);
   });

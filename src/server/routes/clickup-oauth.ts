@@ -12,6 +12,8 @@ import {
 } from '../mcp/oauth.js';
 import { requireAuth } from '../auth/middleware.js';
 import { randomBytes } from 'node:crypto';
+import { getBoss, QUEUE_INITIAL_SYNC } from '../sync/boss.js';
+import { ensureWorkspaceWebhook } from '../sync/webhooks.js';
 
 const PKCE_COOKIE = 'tt_oauth_pkce';
 const STATE_COOKIE = 'tt_oauth_state';
@@ -59,6 +61,10 @@ export const clickupOauthRoutes = new Hono()
       expiresAt: new Date(Date.now() + tokenResp.expires_in * 1000),
       scopes: tokenResp.scope ?? null,
     });
+
+    const boss = await getBoss();
+    await boss.send(QUEUE_INITIAL_SYNC, { userId: u.id });
+    try { await ensureWorkspaceWebhook(u.id, workspaceId); } catch (e) { console.error('[clickup] webhook register failed', e); }
 
     return c.redirect('/settings?clickup=connected');
   })

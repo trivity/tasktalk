@@ -3,7 +3,9 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../lib/rpc.js';
 import { useConversations } from '../hooks/use-conversations.js';
 import { useMessageStream } from '../hooks/use-message-stream.js';
+import { useTaskContext } from '../hooks/use-task-context.js';
 import { ConversationList } from '../components/sidebar/ConversationList.js';
+import { TaskContextPanel } from '../components/sidebar/TaskContextPanel.js';
 import { MessageStream } from '../components/chat/MessageStream.js';
 import { Composer } from '../components/chat/Composer.js';
 
@@ -23,10 +25,24 @@ export function Chat() {
   const [history, setHistory] = useState<PersistedMessage[]>([]);
   const { streaming, send } = useMessageStream(id ?? '');
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(() => localStorage.getItem('tt_sidebar') !== 'closed');
+  const [rightOpen, setRightOpen] = useState<boolean>(() => localStorage.getItem('tt_right') === 'open');
+  const tasks = useTaskContext(history);
 
   useEffect(() => {
     localStorage.setItem('tt_sidebar', sidebarOpen ? 'open' : 'closed');
   }, [sidebarOpen]);
+
+  useEffect(() => {
+    localStorage.setItem('tt_right', rightOpen ? 'open' : 'closed');
+  }, [rightOpen]);
+
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 900px)');
+    const apply = () => { if (mq.matches) setRightOpen(false); };
+    apply();
+    mq.addEventListener('change', apply);
+    return () => mq.removeEventListener('change', apply);
+  }, []);
 
   const loadHistory = useCallback(async () => {
     if (!id) return;
@@ -65,7 +81,13 @@ export function Chat() {
       <main className="flex-1 flex flex-col">
         {!id ? (
           <>
-            <header className="border-b border-[#2a2f3d] px-6 py-3 flex justify-end">
+            <header className="border-b border-[#2a2f3d] px-6 py-3 flex justify-end items-center gap-2">
+              <button
+                onClick={() => setRightOpen((v) => !v)}
+                className="text-[#9298ac] text-sm ml-2"
+              >
+                {rightOpen ? 'Hide context' : 'Show context'}
+              </button>
               <button
                 onClick={() => setSidebarOpen((v) => !v)}
                 className="text-[#9298ac] text-sm"
@@ -85,13 +107,21 @@ export function Chat() {
           <>
             <header className="border-b border-[#2a2f3d] px-6 py-3 text-sm text-[#9298ac] flex justify-between items-center">
               <span>{conversations.find((c) => c.id === id)?.title ?? 'Conversation'}</span>
-              <button
-                onClick={() => setSidebarOpen((v) => !v)}
-                className="text-[#9298ac] text-sm"
-                aria-label={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
-              >
-                {sidebarOpen ? '▶' : '◀'}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setRightOpen((v) => !v)}
+                  className="text-[#9298ac] text-sm ml-2"
+                >
+                  {rightOpen ? 'Hide context' : 'Show context'}
+                </button>
+                <button
+                  onClick={() => setSidebarOpen((v) => !v)}
+                  className="text-[#9298ac] text-sm"
+                  aria-label={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
+                >
+                  {sidebarOpen ? '▶' : '◀'}
+                </button>
+              </div>
             </header>
             {!streaming && history.length === 0 ? (
               <div className="flex-1 flex items-center justify-center">
@@ -117,6 +147,7 @@ export function Chat() {
           </>
         )}
       </main>
+      {rightOpen && <TaskContextPanel tasks={tasks} asOf={null} />}
     </div>
   );
 }

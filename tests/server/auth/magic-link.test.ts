@@ -1,18 +1,15 @@
-// TODO: enable when local Postgres is available (Docker / Railway / local install).
-// These tests insert a real user, issue a token, verify it, and assert single-use semantics —
-// all of which require a live Postgres connection. The implementation in
-// src/server/auth/magic-link.ts itself is correct by construction; running this suite
-// is the integration check.
+// Integration tests against a live Postgres (DATABASE_URL from .env).
+// Inserts a unique user per run; relies on Plan A's cu_* migration being applied.
 import { describe, it, expect, beforeAll } from 'vitest';
 import { issueMagicLinkToken, verifyMagicLinkToken } from '../../../src/server/auth/magic-link.js';
 import { db } from '../../../src/server/db/client.js';
 import { users } from '../../../src/server/db/schema.js';
 
-describe.skip('magic link [requires Postgres]', () => {
+describe('magic link', () => {
   let userId: string;
   beforeAll(async () => {
     const [u] = await db.insert(users).values({ email: `ml-${Date.now()}@test` }).returning();
-    userId = u.id;
+    userId = u!.id;
   });
 
   it('issues a token, verifies it, then rejects re-use', async () => {

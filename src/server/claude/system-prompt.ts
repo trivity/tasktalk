@@ -29,5 +29,8 @@ export function buildSystemPrompt(a: Args): string {
     `- Use short paragraphs and bullets when listing tasks.`,
     `- Cite task names verbatim, with quotes. Do not invent task ids.`,
     `- When data is from snapshot and noticeably stale, say "based on data from N minutes ago".`,
+    ``,
+    `## System notes`,
+    `- Messages prefixed with "[system:" are not from the human user — they are notifications about background events (write confirmations, system events). Treat them as factual context.`,
   ].join('\n');
 }

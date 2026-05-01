@@ -7,6 +7,7 @@ import { clickupOauthRoutes } from './routes/clickup-oauth.js';
 import { webhookRoutes } from './routes/webhooks.js';
 import { conversationRoutes } from './routes/conversations.js';
 import { chatRoutes } from './routes/chat.js';
+import { confirmWriteRoutes } from './routes/confirm-write.js';
 import {
   getBoss,
   QUEUE_INITIAL_SYNC,
@@ -28,6 +29,7 @@ async function startWeb() {
   app.route('/api/webhooks', webhookRoutes);
   app.route('/api/conversations', conversationRoutes);
   app.route('/api/chat', chatRoutes);
+  app.route('/api/confirm-write', confirmWriteRoutes);
   serve({ fetch: app.fetch, port: 3000 }, (info) => {
     console.log(`[web] listening on http://localhost:${info.port}`);
   });

@@ -2,10 +2,12 @@ import './load-env.js';
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { env } from './env.js';
+import { authRoutes } from './auth/routes.js';
 
 async function startWeb() {
   const app = new Hono();
   app.get('/api/health', (c) => c.json({ ok: true, role: 'web' }));
+  app.route('/api/auth', authRoutes);
   serve({ fetch: app.fetch, port: 3000 }, (info) => {
     console.log(`[web] listening on http://localhost:${info.port}`);
   });

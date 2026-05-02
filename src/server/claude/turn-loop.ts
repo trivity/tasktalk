@@ -1,6 +1,7 @@
 import type Anthropic from '@anthropic-ai/sdk';
 import { randomUUID } from 'node:crypto';
-import { anthropic, CLAUDE_MODEL, MAX_TURN_ITERATIONS } from './client.js';
+import { MAX_TURN_ITERATIONS } from './client.js';
+import { getAiClientForUser, type AiClientHandle } from './get-client.js';
 import { ANTHROPIC_TOOLS, WRITE_TOOL_NAMES } from './tools-registry.js';
 import { executeTool, type ExecuteToolResult } from './execute-tool.js';
 import { buildPreview } from './preview.js';
@@ -31,6 +32,15 @@ export async function runTurn(opts: {
   emit: (event: TurnEvent) => Promise<void> | void;
 }): Promise<void> {
   const pool = new TurnMcpPool(opts.userId);
+
+  // 0. resolve per-user (or env-fallback) AI client
+  let ai: AiClientHandle;
+  try {
+    ai = await getAiClientForUser(opts.userId);
+  } catch (e) {
+    await opts.emit({ type: 'error', error: 'AI provider not configured. Set your Anthropic API key in Settings.' });
+    return;
+  }
 
   // 1. persist user message
   await db.insert(messages).values({ conversationId: opts.conversationId, role: 'user', content: { text: opts.userText } });
@@ -64,8 +74,8 @@ export async function runTurn(opts: {
 
   try {
     for (let iter = 0; iter < MAX_TURN_ITERATIONS; iter++) {
-      const stream = anthropic.messages.stream({
-        model: CLAUDE_MODEL,
+      const stream = ai.client.messages.stream({
+        model: ai.model,
         max_tokens: 2048,
         system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }] as any,
         tools: ANTHROPIC_TOOLS,

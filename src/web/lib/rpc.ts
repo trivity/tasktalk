@@ -51,4 +51,15 @@ export const api = {
     syncState?: { phase?: string; listsDone?: number; listsTotal?: number };
     workspace?: { id: string; name: string };
   }>('/api/onboarding/sync-progress'),
+  listAiCredentials: () => request<{
+    credentials: Array<{ provider: string; model_preference: string | null; updated_at: string; key_set: boolean }>;
+    env_fallback_available: boolean;
+    anthropic_models: ReadonlyArray<{ id: string; label: string }>;
+    default_model: string;
+  }>('/api/auth/me/ai-credentials'),
+  setAiCredential: (provider: string, api_key: string, model_preference?: string) => request<{ ok: true }>('/api/auth/me/ai-credentials', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ provider, api_key, model_preference }),
+  }),
+  deleteAiCredential: (provider: string) => request<{ ok: true }>(`/api/auth/me/ai-credentials/${provider}`, { method: 'DELETE' }),
 };

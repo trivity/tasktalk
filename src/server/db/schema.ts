@@ -251,3 +251,19 @@ export const auditLog = pgTable(
     convIdx: index('audit_log_conv_idx').on(t.conversationId, t.createdAt),
   }),
 );
+
+export const userAiCredentials = pgTable(
+  'user_ai_credentials',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    provider: text('provider', { enum: ['anthropic', 'openai'] }).notNull(),
+    apiKeyEnc: text('api_key_enc').notNull(),
+    modelPreference: text('model_preference'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    userProviderIdx: uniqueIndex('user_ai_creds_user_provider_idx').on(t.userId, t.provider),
+  }),
+);

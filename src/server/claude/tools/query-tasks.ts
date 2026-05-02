@@ -48,8 +48,21 @@ export async function executeQueryTasks(
         'clickup_filter_tasks',
         mcpFiltersFor(workspaceId, args),
       );
+      const liveTasks = liveResult.tasks ?? [];
+
+      // Live returned empty: this often means our filter args don't match what
+      // ClickUp's MCP expects (filter shape varies). Fall back to snapshot if
+      // the mirror has anything for these filters — better stale data than no
+      // data when the user's actually got tasks.
+      if (liveTasks.length === 0 && route === 'live') {
+        const fallback = await querySnapshot({ workspaceId, filters });
+        if (fallback.results.length > 0) {
+          return { ...fallback, data_source: 'snapshot · live-fallback', fallback_reason: 'live returned empty' };
+        }
+      }
+
       // best-effort cache-back
-      for (const t of liveResult.tasks ?? []) {
+      for (const t of liveTasks) {
         try { await upsertTask(workspaceId, t); } catch { /* non-fatal */ }
       }
       // queue a sync for next time
@@ -60,7 +73,7 @@ export async function executeQueryTasks(
       return {
         data_source: 'live',
         as_of: new Date().toISOString(),
-        results: (liveResult.tasks ?? []).map(normalizeTask),
+        results: liveTasks.map(normalizeTask),
         truncated: false,
         first_run: route === 'live-first-run',
       };

@@ -39,7 +39,7 @@ export const authRoutes = new Hono()
     setCookie(c, SESSION_COOKIE_NAME, sess.id, {
       httpOnly: true,
       secure: env.BASE_URL.startsWith('https'),
-      sameSite: 'Strict',
+      sameSite: 'Lax',
       path: '/',
       maxAge: SESSION_TTL_MS / 1000,
     });
@@ -53,7 +53,7 @@ export const authRoutes = new Hono()
     setCookie(c, SESSION_COOKIE_NAME, sess.id, {
       httpOnly: true,
       secure: env.BASE_URL.startsWith('https'),
-      sameSite: 'Strict',
+      sameSite: 'Lax',
       path: '/',
       maxAge: SESSION_TTL_MS / 1000,
     });

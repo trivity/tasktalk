@@ -1,8 +1,8 @@
 import { randomBytes, createHash } from 'node:crypto';
 import { env } from '../env.js';
 
-const AUTHORIZE_URL = 'https://app.clickup.com/api/v2/oauth/authorize';
-const TOKEN_URL = 'https://app.clickup.com/api/v2/oauth/token';
+const AUTHORIZE_URL = 'https://mcp.clickup.com/oauth/authorize';
+const TOKEN_URL = 'https://mcp.clickup.com/oauth/token';
 
 function base64url(buf: Buffer): string {
   return buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -48,7 +48,6 @@ export async function exchangeCodeForToken(params: {
   const body = new URLSearchParams({
     grant_type: 'authorization_code',
     client_id: env.CLICKUP_OAUTH_CLIENT_ID,
-    client_secret: env.CLICKUP_OAUTH_CLIENT_SECRET,
     code: params.code,
     code_verifier: params.codeVerifier,
     redirect_uri: params.redirectUri,
@@ -66,7 +65,6 @@ export async function refreshAccessToken(refreshToken: string): Promise<ClickUpT
   const body = new URLSearchParams({
     grant_type: 'refresh_token',
     client_id: env.CLICKUP_OAUTH_CLIENT_ID,
-    client_secret: env.CLICKUP_OAUTH_CLIENT_SECRET,
     refresh_token: refreshToken,
   });
   const res = await fetch(TOKEN_URL, {

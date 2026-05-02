@@ -201,6 +201,22 @@ function logPartial(label: string, err: unknown, raw?: unknown): void {
   }
 }
 
+/**
+ * Detect ClickUp's "Multiple workspaces available. Please specify..." error.
+ * Returns the list of workspace ids advertised in the error message, or null.
+ */
+function detectMultiWorkspaceError(resp: unknown): string[] | null {
+  if (!resp || typeof resp !== 'object') return null;
+  const r = resp as Json;
+  if (!r.isError) return null;
+  const text = Array.isArray(r.content)
+    ? (r.content as Array<{ type?: string; text?: string }>).map((b) => b.text ?? '').join(' ')
+    : '';
+  const match = text.match(/Available workspaces?:\s*([\d,\s]+)/i);
+  if (!match) return null;
+  return match[1]!.split(/[,\s]+/).map((s) => s.trim()).filter((s) => /^\d+$/.test(s));
+}
+
 export async function runInitialSync({ userId }: InitialSyncPayload): Promise<void> {
   const pool = new TurnMcpPool(userId);
   const session = await pool.get();
@@ -226,6 +242,20 @@ export async function runInitialSync({ userId }: InitialSyncPayload): Promise<vo
         logPartial('clickup_get_workspace_hierarchy fully failed; aborting', err2);
         throw err2;
       }
+    }
+
+    // ClickUp's MCP rejects no-arg calls with a "Multiple workspaces available"
+    // error when the user has access to more than one. Parse the available IDs
+    // from the error and retry with the first (or the existing real workspace_id
+    // if we already have one). Future enhancement: workspace picker UI.
+    const multi = detectMultiWorkspaceError(rawHierarchy);
+    if (multi && multi.length > 0) {
+      const pick = !workspaceId.startsWith('pending-') && multi.includes(workspaceId)
+        ? workspaceId
+        : multi[0]!;
+      console.log(`[initial-sync] multiple workspaces (${multi.join(',')}) — picking ${pick}`);
+      await pacer.acquire();
+      rawHierarchy = await callMcpTool(session, 'clickup_get_workspace_hierarchy', { workspace_id: pick });
     }
 
     const parsed = parseHierarchy(rawHierarchy);

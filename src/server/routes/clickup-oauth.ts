@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import { db } from '../db/client.js';
-import { clickupConnections } from '../db/schema.js';
+import { clickupConnections, cuWorkspaces } from '../db/schema.js';
 import { and, eq, isNull } from 'drizzle-orm';
 import { env } from '../env.js';
 import { encryptToken } from '../db/encrypt.js';
@@ -88,7 +88,43 @@ export const clickupOauthRoutes = new Hono()
       .from(clickupConnections)
       .where(and(eq(clickupConnections.userId, u.id), isNull(clickupConnections.tombstonedAt)))
       .limit(1);
-    return c.json({ connected: !!row, connection: row ?? null });
+    if (!row) return c.json({ connected: false, connection: null });
+    // Surface workspace-level sync state if we have one for this connection's
+    // workspace, so the UI can show 'syncing'/'done'/'never' status.
+    const [ws] = await db
+      .select({
+        lastFullSyncAt: cuWorkspaces.lastFullSyncAt,
+        lastIncrementalSyncAt: cuWorkspaces.lastIncrementalSyncAt,
+        syncState: cuWorkspaces.syncState,
+      })
+      .from(cuWorkspaces)
+      .where(eq(cuWorkspaces.workspaceId, row.workspaceId))
+      .limit(1);
+    return c.json({
+      connected: true,
+      connection: row,
+      workspace: ws ?? null,
+      pending_workspace_id: row.workspaceId.startsWith('pending-'),
+    });
+  })
+  .post('/sync-now', requireAuth, async (c) => {
+    const u = c.get('user');
+    const [row] = await db
+      .select()
+      .from(clickupConnections)
+      .where(and(eq(clickupConnections.userId, u.id), isNull(clickupConnections.tombstonedAt)))
+      .limit(1);
+    if (!row) return c.json({ error: 'not_connected' }, 400);
+    // Run sync inline so the user gets a definitive done/error response.
+    // For larger workspaces this can take minutes; the UI shows a spinner.
+    try {
+      const { runInitialSync } = await import('../sync/initial-sync.js');
+      await runInitialSync({ userId: u.id });
+      return c.json({ ok: true });
+    } catch (err) {
+      console.error('[sync-now] failed', err);
+      return c.json({ error: String((err as Error).message ?? err) }, 500);
+    }
   });
 
 /**

@@ -29,8 +29,14 @@ export const api = {
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ email, name }),
   }),
-  clickupStatus: () => request<{ connected: boolean }>('/api/clickup/status'),
+  clickupStatus: () => request<{
+    connected: boolean;
+    connection?: { workspaceId: string } | null;
+    workspace?: { lastIncrementalSyncAt?: string | null; syncState?: { phase?: string; listsDone?: number; listsTotal?: number } } | null;
+    pending_workspace_id?: boolean;
+  }>('/api/clickup/status'),
   clickupDisconnect: () => request<{ ok: true }>('/api/clickup/disconnect', { method: 'POST' }),
+  clickupSyncNow: () => request<{ ok: true }>('/api/clickup/sync-now', { method: 'POST' }),
   listConversations: () => request<{ conversations: Array<{ id: string; title: string; lastMessageAt: string }> }>('/api/conversations'),
   createConversation: () => request<{ conversation: { id: string; title: string } }>('/api/conversations', { method: 'POST' }),
   listMessages: (id: string) => request<{ messages: Array<{ id: string; role: string; content: any; createdAt: string }> }>(`/api/conversations/${id}/messages`),

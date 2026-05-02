@@ -11,27 +11,40 @@ type AiCredsState = {
   default_model: string;
 };
 
+type ClickUpStatus = {
+  connected: boolean;
+  connection?: { workspaceId: string } | null;
+  workspace?: { lastIncrementalSyncAt?: string | null; syncState?: { phase?: string; listsDone?: number; listsTotal?: number } } | null;
+  pending_workspace_id?: boolean;
+};
+
 export function Settings() {
   const [user, setUser] = useState<{ email: string; name: string | null; isAdmin: boolean } | null>(null);
-  const [connected, setConnected] = useState<boolean>(false);
+  const [cuStatusObj, setCuStatusObj] = useState<ClickUpStatus | null>(null);
   const [pw, setPw] = useState('');
   const [pwMsg, setPwMsg] = useState<string | null>(null);
   const [aiCreds, setAiCreds] = useState<AiCredsState | null>(null);
   const [aiKey, setAiKey] = useState('');
   const [aiModel, setAiModel] = useState('');
   const [aiMsg, setAiMsg] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState<string | null>(null);
   const [params] = useSearchParams();
   const nav = useNavigate();
 
+  const refreshCuStatus = () => api.clickupStatus().then((r) => setCuStatusObj(r as unknown as ClickUpStatus));
+
   useEffect(() => {
     api.me().then((r) => setUser(r.user)).catch(() => nav('/login'));
-    api.clickupStatus().then((r) => setConnected(r.connected));
+    void refreshCuStatus();
     api.listAiCredentials().then((r) => {
       setAiCreds(r);
       const existing = r.credentials.find((c) => c.provider === 'anthropic');
       setAiModel(existing?.model_preference ?? r.default_model);
     }).catch(() => {});
   }, [nav]);
+
+  const connected = !!cuStatusObj?.connected;
 
   async function setPassword() {
     setPwMsg(null);
@@ -58,7 +71,20 @@ export function Settings() {
   }
 
   async function logout() { await api.logout(); nav('/login'); }
-  async function disconnect() { await api.clickupDisconnect(); setConnected(false); }
+  async function disconnect() { await api.clickupDisconnect(); void refreshCuStatus(); }
+  async function refreshSnapshot() {
+    setSyncMsg(null);
+    setSyncing(true);
+    try {
+      await api.clickupSyncNow();
+      setSyncMsg('Snapshot refreshed.');
+      await refreshCuStatus();
+    } catch (e: any) {
+      setSyncMsg(`Refresh failed: ${e.message}`);
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   if (!user) return null;
   const cuStatus = params.get('clickup');
@@ -188,7 +214,34 @@ export function Settings() {
         {cuStatus === 'connected' && <p className="text-sm text-[#34d399] mb-2">Connected ✓</p>}
         {cuStatus === 'error' && <p className="text-sm text-[#f87171] mb-2">Connection failed. Try again.</p>}
         {connected ? (
-          <button onClick={disconnect} className="border border-[#f87171] text-[#f87171] rounded-md px-4 py-2 text-sm">Disconnect</button>
+          <>
+            {cuStatusObj?.workspace?.lastIncrementalSyncAt ? (
+              <p className="text-xs text-[#9298ac] mb-3">
+                Last sync: {new Date(cuStatusObj.workspace.lastIncrementalSyncAt).toLocaleString()}
+                {cuStatusObj.workspace.syncState?.phase && cuStatusObj.workspace.syncState.phase !== 'done' && (
+                  <span className="ml-2 text-[#fbbf24]">
+                    · {cuStatusObj.workspace.syncState.phase} ({cuStatusObj.workspace.syncState.listsDone ?? 0}/{cuStatusObj.workspace.syncState.listsTotal ?? '?'} lists)
+                  </span>
+                )}
+              </p>
+            ) : (
+              <p className="text-xs text-[#fbbf24] mb-3">Never synced — refresh to populate.</p>
+            )}
+            <div className="flex gap-2 items-center">
+              <button
+                onClick={refreshSnapshot}
+                disabled={syncing}
+                className="bg-[#7c6ef7] text-white rounded-md px-4 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {syncing ? 'Refreshing…' : 'Refresh snapshot'}
+              </button>
+              <button onClick={disconnect} className="border border-[#f87171] text-[#f87171] rounded-md px-4 py-2 text-sm">Disconnect</button>
+            </div>
+            {syncMsg && <p className="text-sm text-[#9298ac] mt-2">{syncMsg}</p>}
+            <p className="text-xs text-[#5a6070] mt-3">
+              Refresh re-pulls your workspace tree, members, and tasks from ClickUp. Can take a minute or two for large workspaces.
+            </p>
+          </>
         ) : (
           <a href="/api/clickup/connect" className="bg-[#7c6ef7] text-white rounded-md px-4 py-2 text-sm">Connect ClickUp</a>
         )}

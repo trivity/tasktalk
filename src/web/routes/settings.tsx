@@ -120,6 +120,31 @@ export function Settings() {
               value={aiKey}
               onChange={(e) => setAiKey(e.target.value)}
             />
+            <details className="mt-2 text-xs text-[#9298ac]">
+              <summary className="cursor-pointer hover:text-[#c9cdd9] select-none">
+                How do I get an Anthropic API key?
+              </summary>
+              <ol className="mt-2 ml-4 space-y-1 list-decimal">
+                <li>
+                  Go to{' '}
+                  <a
+                    href="https://console.anthropic.com/settings/keys"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[#7c6ef7] underline"
+                  >
+                    console.anthropic.com/settings/keys
+                  </a>
+                  {' '}(sign up or sign in if needed).
+                </li>
+                <li>Add a payment method under <strong>Plans &amp; Billing</strong> → most usage starts at $5 of credits.</li>
+                <li>Click <strong>Create Key</strong>, name it something like &ldquo;Tasktalk&rdquo;, and copy the key (it starts with <code className="bg-[#0f1117] px-1 rounded">sk-ant-</code>).</li>
+                <li>Paste it above and click Save. The key is encrypted before it touches the database; it&rsquo;s never sent back to the browser.</li>
+              </ol>
+              <p className="mt-2 text-[#5a6070]">
+                Costs: Sonnet 4.6 is ~$3 per million input tokens, ~$15 per million output. A typical chat turn here is well under 1¢. Set a monthly cap in the Anthropic console if you want a hard ceiling.
+              </p>
+            </details>
           </div>
 
           <div>

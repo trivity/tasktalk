@@ -374,9 +374,16 @@ export async function runInitialSync({ userId }: InitialSyncPayload): Promise<vo
       }
       listsDone++;
       if (listsDone % 5 === 0) {
+        // Stamp progress AND last_incremental_sync_at incrementally so that
+        // an interrupted run still leaves usable data in the mirror — the
+        // router uses last_incremental_sync_at to decide snapshot freshness,
+        // so without an incremental stamp we'd be stuck reporting 1970.
         await db
           .update(cuWorkspaces)
-          .set({ syncState: { phase: 'tasks', listsDone, listsTotal } })
+          .set({
+            lastIncrementalSyncAt: new Date(),
+            syncState: { phase: 'tasks', listsDone, listsTotal },
+          })
           .where(eq(cuWorkspaces.workspaceId, workspaceId));
       }
     }

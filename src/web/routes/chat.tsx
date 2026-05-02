@@ -29,7 +29,29 @@ export function Chat() {
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(() => localStorage.getItem('tt_sidebar') !== 'closed');
   const [rightOpen, setRightOpen] = useState<boolean>(() => localStorage.getItem('tt_right') === 'open');
   const [user, setUser] = useState<CurrentUser | null>(null);
+  const [renamingTitle, setRenamingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState('');
   const tasks = useTaskContext(history);
+  const currentTitle = conversations.find((c) => c.id === id)?.title ?? 'Conversation';
+
+  function startRename() {
+    setTitleDraft(currentTitle);
+    setRenamingTitle(true);
+  }
+
+  async function commitRename() {
+    const trimmed = titleDraft.trim();
+    if (!id || !trimmed || trimmed.length > 200 || trimmed === currentTitle) {
+      setRenamingTitle(false);
+      return;
+    }
+    try {
+      await api.renameConversation(id, trimmed);
+      await refreshConvs();
+    } finally {
+      setRenamingTitle(false);
+    }
+  }
 
   useEffect(() => {
     api.me().then((r) => setUser(r.user)).catch(() => nav('/login'));
@@ -114,9 +136,31 @@ export function Chat() {
           </>
         ) : (
           <>
-            <header className="border-b border-[#2a2f3d] px-6 py-3 text-sm text-[#9298ac] flex justify-between items-center">
-              <span>{conversations.find((c) => c.id === id)?.title ?? 'Conversation'}</span>
-              <div className="flex items-center gap-2">
+            <header className="border-b border-[#2a2f3d] px-6 py-3 text-sm text-[#9298ac] flex justify-between items-center gap-3">
+              {renamingTitle ? (
+                <input
+                  autoFocus
+                  className="flex-1 bg-[#0f1117] border border-[#7c6ef7] rounded-md px-2 py-1 text-[#e8eaf0] outline-none text-sm"
+                  value={titleDraft}
+                  onChange={(e) => setTitleDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void commitRename();
+                    if (e.key === 'Escape') setRenamingTitle(false);
+                  }}
+                  onBlur={() => void commitRename()}
+                  maxLength={200}
+                />
+              ) : (
+                <button
+                  onClick={startRename}
+                  className="group flex items-center gap-2 text-left flex-1 truncate hover:text-[#e8eaf0] transition-colors"
+                  title="Click to rename"
+                >
+                  <span className="truncate">{currentTitle}</span>
+                  <span className="opacity-0 group-hover:opacity-100 text-[11px] text-[#5a6070] transition-opacity">✎</span>
+                </button>
+              )}
+              <div className="flex items-center gap-2 flex-shrink-0">
                 <button
                   onClick={() => setRightOpen((v) => !v)}
                   className="text-[#9298ac] text-sm ml-2"

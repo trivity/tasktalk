@@ -39,16 +39,17 @@ export async function executeWrite(opts: {
   try {
     let mcpResult: Record<string, unknown> | null = null;
     if (opts.toolName === 'create_task') {
-      mcpResult = await callMcpTool<Record<string, unknown>>(session, 'create_task', opts.args);
+      mcpResult = await callMcpTool<Record<string, unknown>>(session, 'clickup_create_task', opts.args);
     } else if (opts.toolName === 'update_task') {
       const { task_id, patch } = opts.args as { task_id: string; patch: Record<string, unknown> };
-      mcpResult = await callMcpTool<Record<string, unknown>>(session, 'update_task', { task_id, ...patch });
+      mcpResult = await callMcpTool<Record<string, unknown>>(session, 'clickup_update_task', { task_id, ...patch });
     } else if (opts.toolName === 'add_comment') {
       const { task_id, text } = opts.args as { task_id: string; text: string };
-      mcpResult = await callMcpTool<Record<string, unknown>>(session, 'add_comment', { task_id, comment_text: text });
+      // ClickUp's clickup_create_task_comment expects `comment_text`, not `text`.
+      mcpResult = await callMcpTool<Record<string, unknown>>(session, 'clickup_create_task_comment', { task_id, comment_text: text });
     } else if (opts.toolName === 'delete_task') {
       const { task_id } = opts.args as { task_id: string };
-      await callMcpTool(session, 'delete_task', { task_id });
+      await callMcpTool(session, 'clickup_delete_task', { task_id });
       mcpResult = null;
     }
 
@@ -63,7 +64,7 @@ export async function executeWrite(opts: {
         : String((opts.args as { task_id: string }).task_id);
       if (taskId) {
         try {
-          const fetched = await callMcpTool<{ task: Record<string, unknown> }>(session, 'get_task', { task_id: taskId });
+          const fetched = await callMcpTool<{ task: Record<string, unknown> }>(session, 'clickup_get_task', { task_id: taskId });
           if (fetched?.task) await upsertTask(opts.workspaceId, fetched.task);
           mcpResult = fetched?.task ?? mcpResult;
         } catch { /* best-effort */ }

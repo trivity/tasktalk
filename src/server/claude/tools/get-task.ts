@@ -3,7 +3,7 @@ import { upsertTask } from '../../sync/upsert.js';
 
 export async function executeGetTask(workspaceId: string, taskId: string, pool: TurnMcpPool) {
   const session = await pool.get();
-  const resp = await callMcpTool<{ task: Record<string, unknown> }>(session, 'get_task', { task_id: taskId });
+  const resp = await callMcpTool<{ task: Record<string, unknown> }>(session, 'clickup_get_task', { task_id: taskId });
   if (resp?.task) {
     try { await upsertTask(workspaceId, resp.task); } catch { /* non-fatal cache-back */ }
   }

@@ -21,7 +21,7 @@ export async function runSyncTask({ workspaceId, taskId }: SyncTaskPayload): Pro
     let lastTask: Record<string, unknown> | null = null;
     let wasDeleted = false;
     try {
-      const resp = await callMcpTool<{ task: Record<string, unknown> }>(session, 'get_task', { task_id: taskId });
+      const resp = await callMcpTool<{ task: Record<string, unknown> }>(session, 'clickup_get_task', { task_id: taskId });
       if (resp?.task) {
         await upsertTask(workspaceId, resp.task);
         lastTask = resp.task;

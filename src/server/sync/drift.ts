@@ -36,10 +36,26 @@ async function driftSingle(workspaceId: string): Promise<void> {
     const lists = await db.select().from(cuLists).where(and(eq(cuLists.workspaceId, workspaceId), isNull(cuLists.deletedAt)));
     for (const l of lists) {
       let page = 0;
-      while (true) {
+      const MAX_PAGES = 200;
+      while (page < MAX_PAGES) {
         await pacer.acquire();
-        const resp = await callMcpTool<{ tasks: Array<Record<string, unknown>>; last_page?: boolean }>(
-          session, 'list_tasks', { list_id: l.id, page, date_updated_gt: since.getTime(), include_subtasks: true });
+        let resp: { tasks?: Array<Record<string, unknown>>; last_page?: boolean };
+        try {
+          resp = await callMcpTool<{ tasks: Array<Record<string, unknown>>; last_page?: boolean }>(
+            session,
+            'clickup_filter_tasks',
+            {
+              workspace_id: workspaceId,
+              list_id: l.id,
+              page,
+              date_updated_gt: since.getTime(),
+              include_subtasks: true,
+            },
+          );
+        } catch (err) {
+          console.warn(`[drift] clickup_filter_tasks list=${l.id} page=${page}: ${(err as Error).message}`);
+          break;
+        }
         for (const t of resp.tasks ?? []) {
           await upsertTask(workspaceId, t);
           drifted++;

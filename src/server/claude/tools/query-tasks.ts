@@ -45,8 +45,8 @@ export async function executeQueryTasks(
       const session = await pool.get();
       const liveResult = await callMcpTool<{ tasks: Array<Record<string, unknown>> }>(
         session,
-        'list_tasks',
-        mcpFiltersFor(args),
+        'clickup_filter_tasks',
+        mcpFiltersFor(workspaceId, args),
       );
       // best-effort cache-back
       for (const t of liveResult.tasks ?? []) {
@@ -74,11 +74,14 @@ export async function executeQueryTasks(
   return await querySnapshot({ workspaceId, filters });
 }
 
-function mcpFiltersFor(args: QueryTasksArgs): Record<string, unknown> {
+function mcpFiltersFor(workspaceId: string, args: QueryTasksArgs): Record<string, unknown> {
   const out: Record<string, unknown> = {};
+  // ClickUp's clickup_filter_tasks always wants workspace_id.
+  out.workspace_id = workspaceId;
   if (args.list_id) out.list_id = args.list_id;
   if (args.status) out.statuses = args.status;
-  if (args.assignee_id) out.assignees = [args.assignee_id];
+  // ClickUp expects assignees as comma-separated user ids per its REST conventions.
+  if (args.assignee_id) out.assignees = String(args.assignee_id);
   if (args.due_before) out.due_date_lt = new Date(args.due_before).getTime();
   if (args.due_after) out.due_date_gt = new Date(args.due_after).getTime();
   return out;

@@ -8,7 +8,7 @@ export function ThemeToggle() {
     <select
       value={mode}
       onChange={(e) => setMode(e.target.value as ThemeMode)}
-      className="bg-[var(--surface-2)] border border-[var(--border)] rounded text-xs px-2 py-1 text-[var(--text-muted)]"
+      className="bg-surface border border-border rounded-md text-sm px-2 py-1 text-text outline-none focus:border-accent"
     >
       <option value="system">System</option>
       <option value="dark">Dark</option>

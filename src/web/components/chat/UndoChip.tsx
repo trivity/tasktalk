@@ -31,7 +31,7 @@ export function UndoChip({ onUndone }: { onUndone: () => void }) {
     <button
       onClick={undo}
       disabled={busy}
-      className="text-[11px] uppercase tracking-wide rounded px-2 py-0.5 border border-[#2a2f3d] text-[#a78bfa] hover:bg-[#1a1d27]"
+      className="text-[11px] uppercase tracking-wide rounded-md px-2 py-0.5 text-accent hover:bg-accent-soft transition-colors duration-150"
     >
       {busy ? 'Undoing...' : '↶ Undo'}
     </button>

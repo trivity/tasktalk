@@ -1,4 +1,5 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { MessageCircle, Settings as SettingsIcon, Users, LogOut } from 'lucide-react';
 import { api } from '../lib/rpc.js';
 
 type Props = {
@@ -14,41 +15,46 @@ export function Nav({ user }: Props) {
     nav('/login');
   }
 
-  const link = (to: string, label: string) => {
+  const link = (to: string, label: string, Icon: typeof MessageCircle) => {
     const active = loc.pathname === to || loc.pathname.startsWith(to + '/');
     return (
       <Link
         to={to}
-        className={`px-3 py-1.5 rounded-md text-sm transition-colors ${
+        className={`px-3 py-1.5 rounded-md text-sm font-medium inline-flex items-center gap-2 transition-colors duration-150 ${
           active
-            ? 'bg-[#1a1d27] text-[#e8eaf0]'
-            : 'text-[#9298ac] hover:text-[#e8eaf0] hover:bg-[#14161e]'
+            ? 'bg-surface-active text-text'
+            : 'text-text-muted hover:text-text hover:bg-surface-hover'
         }`}
       >
-        {label}
+        <Icon className="w-4 h-4" />
+        <span>{label}</span>
       </Link>
     );
   };
 
   return (
-    <header className="border-b border-[#2a2f3d] bg-[#0f1117] flex items-center justify-between px-5 py-2 flex-shrink-0">
+    <header className="bg-bg flex items-center justify-between px-5 py-2 flex-shrink-0 border-b border-border">
       <div className="flex items-center gap-1">
-        <Link to="/chat" className="font-bold text-[#e8eaf0] mr-3 tracking-tight">
+        <Link to="/chat" className="font-semibold text-text mr-3 tracking-tight">
           Tasktalk
         </Link>
-        {link('/chat', 'Chat')}
-        {link('/settings', 'Settings')}
-        {user?.isAdmin && link('/members', 'Members')}
+        {link('/chat', 'Chat', MessageCircle)}
+        {link('/settings', 'Settings', SettingsIcon)}
+        {user?.isAdmin && link('/members', 'Members', Users)}
       </div>
       <div className="flex items-center gap-3">
         {user && (
-          <span className="text-xs text-[#5a6070] hidden sm:inline">
+          <span className="text-xs text-text-subtle hidden sm:inline">
             {user.email}
             {user.isAdmin && ' · admin'}
           </span>
         )}
-        <button onClick={logout} className="text-xs text-[#9298ac] hover:text-[#f87171] px-2 py-1">
-          Sign out
+        <button
+          onClick={logout}
+          className="text-xs text-text-muted hover:text-text hover:bg-surface-hover px-2 py-1 rounded-md inline-flex items-center gap-1.5 transition-colors duration-150"
+        >
+          <LogOut className="w-3.5 h-3.5" />
+          <span>Sign out</span>
         </button>
       </div>
     </header>

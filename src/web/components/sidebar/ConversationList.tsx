@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
+import { Plus, Pencil, Trash2 } from 'lucide-react';
 import type { Conv } from '../../hooks/use-conversations.js';
 import { api } from '../../lib/rpc.js';
 
@@ -72,7 +73,7 @@ export function ConversationList({ conversations, onNew, onChange }: Props) {
         <div key={c.id} className="px-2 py-1 mb-0.5">
           <input
             autoFocus
-            className="w-full bg-[#0f1117] border border-[#7c6ef7] rounded-md text-[12px] px-2 py-1 text-[#e8eaf0] outline-none"
+            className="w-full bg-bg border border-accent rounded-md text-[13px] px-2 py-1 text-text outline-none"
             value={renameValue}
             onChange={(e) => setRenameValue(e.target.value)}
             onKeyDown={(e) => {
@@ -89,11 +90,11 @@ export function ConversationList({ conversations, onNew, onChange }: Props) {
     return (
       <div
         key={c.id}
-        className={`group flex items-center px-2 py-1.5 rounded-md mb-0.5 ${
-          isActive ? 'bg-[#1a1d27] text-[#e8eaf0]' : 'text-[#c9cdd9] hover:bg-[#14161e]'
+        className={`group flex items-center px-2 py-1.5 rounded-md mb-0.5 transition-colors duration-150 ${
+          isActive ? 'bg-surface-active text-text' : 'text-text hover:bg-surface-hover'
         } ${isBusy ? 'opacity-50' : ''}`}
       >
-        <Link to={`/chat/${c.id}`} className="flex-1 truncate text-[12px]" title={c.title}>
+        <Link to={`/chat/${c.id}`} className="flex-1 truncate text-[13px]" title={c.title}>
           {c.title}
         </Link>
         <button
@@ -101,38 +102,39 @@ export function ConversationList({ conversations, onNew, onChange }: Props) {
             e.preventDefault();
             startRename(c.id, c.title);
           }}
-          className="opacity-0 group-hover:opacity-100 text-[#5a6070] hover:text-[#7c6ef7] px-1 text-[11px] transition-opacity"
+          className="opacity-0 group-hover:opacity-100 text-text-subtle hover:text-text px-1 transition-opacity"
           title="Rename"
           aria-label="Rename conversation"
         >
-          ✎
+          <Pencil className="w-3.5 h-3.5" />
         </button>
         <button
           onClick={(e) => {
             e.preventDefault();
             void deleteConv(c.id, c.title);
           }}
-          className="opacity-0 group-hover:opacity-100 text-[#5a6070] hover:text-[#f87171] px-1 text-[11px] transition-opacity"
+          className="opacity-0 group-hover:opacity-100 text-text-subtle hover:text-error px-1 transition-opacity"
           title="Delete"
           aria-label="Delete conversation"
         >
-          ✕
+          <Trash2 className="w-3.5 h-3.5" />
         </button>
       </div>
     );
   }
 
   return (
-    <aside className="w-[220px] bg-[#0f1117] border-r border-[#2a2f3d] p-3 flex flex-col overflow-y-auto">
+    <aside className="w-[240px] bg-surface p-3 flex flex-col overflow-y-auto">
       <button
         onClick={onNew}
-        className="w-full bg-gradient-to-br from-[#7c6ef7] to-[#5b4fcf] text-white rounded-md py-2 text-sm font-semibold mb-4 flex-shrink-0"
+        className="w-full bg-accent hover:bg-accent-hover text-white rounded-md py-2 text-sm font-medium mb-4 flex-shrink-0 inline-flex items-center justify-center gap-2 transition-colors duration-150"
       >
-        + New conversation
+        <Plus className="w-4 h-4" />
+        <span>New conversation</span>
       </button>
       {Object.entries(groups).map(([label, items]) => items.length > 0 && (
         <div key={label} className="mb-3">
-          <div className="text-[10px] uppercase tracking-wider text-[#5a6070] font-semibold px-2 mb-1">
+          <div className="text-[10px] uppercase tracking-wider text-text-subtle font-semibold px-2 mb-1">
             {label}
           </div>
           {items.map(row)}

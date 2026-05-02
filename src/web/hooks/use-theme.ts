@@ -3,8 +3,8 @@ import { useEffect, useState } from 'react';
 type ThemeMode = 'system' | 'dark' | 'light';
 
 export function useTheme() {
-  const [mode, setMode] = useState<ThemeMode>(() => (localStorage.getItem('tt_theme') as ThemeMode) ?? 'system');
-  const [resolved, setResolved] = useState<'dark' | 'light'>('dark');
+  const [mode, setMode] = useState<ThemeMode>(() => (localStorage.getItem('tt_theme') as ThemeMode) ?? 'light');
+  const [resolved, setResolved] = useState<'dark' | 'light'>('light');
 
   useEffect(() => {
     function apply() {

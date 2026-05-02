@@ -27,20 +27,44 @@ export function Login() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center">
-      <form onSubmit={submit} className="bg-[#181b22] border border-[#2a2f3d] rounded-2xl p-8 w-[400px]">
-        <h1 className="text-xl font-bold mb-6">Sign in to Tasktalk</h1>
-        <input className="w-full bg-[#0f1117] border border-[#2a2f3d] rounded-md p-3 mb-3" type="email" placeholder="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+    <div className="min-h-screen flex items-center justify-center bg-bg p-6">
+      <form
+        onSubmit={submit}
+        className="bg-surface rounded-lg p-10 w-[420px] shadow-lg shadow-black/5"
+      >
+        <h1 className="text-[24px] font-semibold mb-1 text-text">Sign in to Tasktalk</h1>
+        <p className="text-sm text-text-muted mb-8">Talk to your ClickUp workspace through Claude.</p>
+        <input
+          className="w-full bg-bg border border-border rounded-md p-3 mb-3 text-text placeholder:text-text-subtle outline-none focus:border-accent transition-colors duration-150"
+          type="email"
+          placeholder="Email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          required
+        />
         {usePw && (
-          <input className="w-full bg-[#0f1117] border border-[#2a2f3d] rounded-md p-3 mb-3" type="password" placeholder="password" value={pw} onChange={(e) => setPw(e.target.value)} />
+          <input
+            className="w-full bg-bg border border-border rounded-md p-3 mb-3 text-text placeholder:text-text-subtle outline-none focus:border-accent transition-colors duration-150"
+            type="password"
+            placeholder="Password"
+            value={pw}
+            onChange={(e) => setPw(e.target.value)}
+          />
         )}
-        <button className="w-full bg-[#7c6ef7] text-white rounded-md p-3 font-semibold mb-2" type="submit">
+        <button
+          className="w-full bg-accent hover:bg-accent-hover text-white rounded-md p-3 font-medium mb-2 transition-colors duration-150"
+          type="submit"
+        >
           {usePw ? 'Sign in' : 'Send magic link'}
         </button>
-        <button type="button" onClick={() => setUsePw(!usePw)} className="w-full text-sm text-[#9298ac] py-2">
+        <button
+          type="button"
+          onClick={() => setUsePw(!usePw)}
+          className="w-full text-sm text-text-muted hover:text-text py-2 transition-colors duration-150"
+        >
           {usePw ? 'Use magic link instead' : 'Use password instead'}
         </button>
-        {msg && <p className="text-sm text-[#9298ac] mt-3">{msg}</p>}
+        {msg && <p className="text-sm text-text-muted mt-3 text-center">{msg}</p>}
       </form>
     </div>
   );

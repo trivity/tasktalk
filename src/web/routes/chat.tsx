@@ -86,7 +86,7 @@ export function Chat() {
     <div className="flex flex-col h-screen bg-[#0a0b0f] text-[#e8eaf0]">
       <Nav user={user} />
       <div className="flex flex-1 overflow-hidden">
-      {sidebarOpen && <ConversationList conversations={conversations} onNew={newConv} />}
+      {sidebarOpen && <ConversationList conversations={conversations} onNew={newConv} onChange={refreshConvs} />}
       <main className="flex-1 flex flex-col">
         {!id ? (
           <>

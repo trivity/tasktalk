@@ -65,7 +65,7 @@ export async function runTurn(opts: {
   });
 
   // 3. loop
-  const apiMessages: Anthropic.MessageParam[] = history.map((m) => toApiMessage(m));
+  const apiMessages: Anthropic.MessageParam[] = history.flatMap((m) => toApiMessages(m));
 
   await opts.emit({ type: 'message_start' });
   let assistantMsgId: string | null = null;
@@ -100,8 +100,11 @@ export async function runTurn(opts: {
       }
 
       if (finalMessage.stop_reason === 'end_turn' || pendingToolUses.length === 0) {
-        // persist assistant message + close
-        const [m] = await db.insert(messages).values({ conversationId: opts.conversationId, role: 'assistant', content: { text: assistantTextBuffer, tool_uses: collectedToolUses.map((t) => ({ id: t.id, name: t.name, input: t.input })) } }).returning();
+        // persist assistant message + close. Include `result` per tool_use so the
+        // history reconstruction (toApiMessages) can emit valid tool_result blocks
+        // for follow-up turns. Without this, Claude rejects the next turn with
+        // "tool_use ids must be followed by tool_result blocks".
+        const [m] = await db.insert(messages).values({ conversationId: opts.conversationId, role: 'assistant', content: { text: assistantTextBuffer, tool_uses: collectedToolUses.map((t) => ({ id: t.id, name: t.name, input: t.input, result: t.result.ok ? t.result.result : { error: t.result.error } })) } }).returning();
         assistantMsgId = m!.id;
         for (const tu of collectedToolUses) {
           await db.insert(toolCalls).values({
@@ -168,7 +171,7 @@ export async function runTurn(opts: {
       // if any writes were proposed, end the turn here. The confirm-write route will resume.
       if (writes.length > 0) {
         const allToolUses = [
-          ...collectedToolUses.map((t) => ({ id: t.id, name: t.name, input: t.input })),
+          ...collectedToolUses.map((t) => ({ id: t.id, name: t.name, input: t.input, result: t.result.ok ? t.result.result : { error: t.result.error } })),
           ...writes.map((w) => ({ id: w.id, name: w.name, input: w.input })),
         ];
         const [m] = await db.insert(messages).values({
@@ -208,15 +211,74 @@ export async function runTurn(opts: {
   }
 }
 
-function toApiMessage(m: { role: string; content: unknown }): Anthropic.MessageParam {
-  const c = m.content as { text?: string; tool_uses?: Array<{ id: string; name: string; input: Record<string, unknown> }> } | undefined;
-  if (m.role === 'user') return { role: 'user', content: c?.text ?? '' };
-  if (m.role === 'assistant') {
-    const blocks: Array<Anthropic.TextBlockParam | Anthropic.ToolUseBlockParam> = [];
-    if (c?.text) blocks.push({ type: 'text', text: c.text });
-    for (const tu of c?.tool_uses ?? []) blocks.push({ type: 'tool_use', id: tu.id, name: tu.name, input: tu.input });
-    return { role: 'assistant', content: blocks.length ? blocks : (c?.text ?? '') };
+type StoredToolUse = { id: string; name: string; input: Record<string, unknown>; result?: unknown };
+type StoredAssistantContent = { text?: string; tool_uses?: StoredToolUse[] };
+type StoredToolMessageContent = { tool_use_id?: string; ok?: boolean; result?: unknown; error?: string | null; status?: string };
+
+/**
+ * Translate a persisted message to one or more Anthropic API messages.
+ *
+ * For assistant messages that ended with tool_use blocks, Anthropic's API requires
+ * the next message to be a user message containing matching tool_result blocks.
+ * Read tools' results are stored on the tool_use itself (per-result above); write
+ * tools' results arrive in subsequent role='tool' messages from the confirm-write
+ * route. We synthesize the tool_result follow-up here from whichever source has it.
+ */
+function toApiMessages(m: { role: string; content: unknown }): Anthropic.MessageParam[] {
+  if (m.role === 'user') {
+    const c = m.content as { text?: string } | undefined;
+    return [{ role: 'user', content: c?.text ?? '' }];
   }
-  // 'tool' and 'system_event' messages don't go to Claude history directly; skip by collapsing to user note
-  return { role: 'user', content: JSON.stringify(m.content) };
+
+  if (m.role === 'assistant') {
+    const c = m.content as StoredAssistantContent | undefined;
+    return [...assistantToApi(c)];
+  }
+
+  if (m.role === 'tool') {
+    // Tool-result message inserted by the confirm-write or undo route.
+    const c = m.content as StoredToolMessageContent | undefined;
+    if (!c?.tool_use_id) return [];
+    const payload = c.status === 'denied'
+      ? 'user_denied'
+      : c.ok === false
+        ? `error: ${c.error ?? 'unknown'}`
+        : JSON.stringify(c.result ?? {});
+    return [{
+      role: 'user',
+      content: [{ type: 'tool_result', tool_use_id: c.tool_use_id, content: payload, is_error: c.ok === false } as Anthropic.ToolResultBlockParam],
+    }];
+  }
+
+  // system_event and unknown roles are not part of Claude's view of the conversation.
+  return [];
+}
+
+function assistantToApi(c: StoredAssistantContent | undefined): Anthropic.MessageParam[] {
+  const blocks: Array<Anthropic.TextBlockParam | Anthropic.ToolUseBlockParam> = [];
+  if (c?.text) blocks.push({ type: 'text', text: c.text });
+  for (const tu of c?.tool_uses ?? []) blocks.push({ type: 'tool_use', id: tu.id, name: tu.name, input: tu.input });
+  if (blocks.length === 0) return [{ role: 'assistant', content: c?.text ?? '' }];
+  const out: Anthropic.MessageParam[] = [{ role: 'assistant', content: blocks }];
+
+  // If any tool_use carries an inline `result` (read tools record this on persist),
+  // emit a synthetic tool_result follow-up. Tool_uses without a stored result are
+  // expected to be paired with a separate role='tool' message immediately after.
+  const inlineResults = (c?.tool_uses ?? []).filter((tu) => tu.result !== undefined);
+  if (inlineResults.length > 0) {
+    out.push({
+      role: 'user',
+      content: inlineResults.map((tu) => {
+        const isErr = !!(tu.result && typeof tu.result === 'object' && (tu.result as { error?: string }).error);
+        return {
+          type: 'tool_result',
+          tool_use_id: tu.id,
+          content: typeof tu.result === 'string' ? tu.result : JSON.stringify(tu.result),
+          is_error: isErr,
+        } as Anthropic.ToolResultBlockParam;
+      }),
+    });
+  }
+
+  return out;
 }

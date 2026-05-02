@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../lib/rpc.js';
 import { ThemeToggle } from '../components/ui/ThemeToggle.js';
+import { Nav } from '../components/Nav.js';
 
 type AiCredsState = {
   credentials: Array<{ provider: string; model_preference: string | null; updated_at: string; key_set: boolean }>;
@@ -64,10 +65,11 @@ export function Settings() {
   const anthropicCred = aiCreds?.credentials.find((c) => c.provider === 'anthropic');
 
   return (
-    <div className="max-w-2xl mx-auto p-8 space-y-8">
+    <div className="min-h-screen flex flex-col bg-[#0a0b0f] text-[#e8eaf0]">
+      <Nav user={user} />
+      <div className="max-w-2xl mx-auto w-full p-8 space-y-8">
       <header className="flex justify-between items-center">
         <h1 className="text-2xl font-bold">Settings</h1>
-        <button onClick={logout} className="text-sm text-[#9298ac]">Sign out</button>
       </header>
 
       <section className="bg-[#181b22] border border-[#2a2f3d] rounded-xl p-6">
@@ -206,6 +208,7 @@ export function Settings() {
           <Link to="/members" className="text-sm text-[#7c6ef7]">Manage members →</Link>
         </section>
       )}
+      </div>
     </div>
   );
 }

@@ -53,3 +53,22 @@ export async function callMcpTool<T = unknown>(session: McpSession, name: string
   const result = await session.client.callTool({ name, arguments: args });
   return result as unknown as T;
 }
+
+/**
+ * Open an MCP session using a raw access token (no DB lookup). Used during
+ * the OAuth callback before the clickup_connections row exists, to discover
+ * the user's workspace_id directly from the MCP server.
+ */
+export async function openMcpSessionWithToken(accessToken: string): Promise<{ client: Client; close: () => Promise<void> }> {
+  const transport = new StreamableHTTPClientTransport(new URL(CLICKUP_MCP_URL), {
+    requestInit: { headers: { Authorization: `Bearer ${accessToken}` } },
+  });
+  const client = new Client({ name: 'tasktalk', version: '0.0.1' }, { capabilities: {} });
+  await client.connect(transport);
+  return {
+    client,
+    close: async () => {
+      try { await client.close(); } catch { /* ignore */ }
+    },
+  };
+}

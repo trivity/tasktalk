@@ -8,8 +8,10 @@ import { ConversationList } from '../components/sidebar/ConversationList.js';
 import { TaskContextPanel } from '../components/sidebar/TaskContextPanel.js';
 import { MessageStream } from '../components/chat/MessageStream.js';
 import { Composer } from '../components/chat/Composer.js';
+import { Nav } from '../components/Nav.js';
 
 type PersistedMessage = { id: string; role: string; content: any; createdAt: string };
+type CurrentUser = { id: string; email: string; name: string | null; isAdmin: boolean };
 
 const SUGGESTED_PROMPTS = [
   'What should I work on next?',
@@ -26,7 +28,12 @@ export function Chat() {
   const { streaming, send } = useMessageStream(id ?? '');
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(() => localStorage.getItem('tt_sidebar') !== 'closed');
   const [rightOpen, setRightOpen] = useState<boolean>(() => localStorage.getItem('tt_right') === 'open');
+  const [user, setUser] = useState<CurrentUser | null>(null);
   const tasks = useTaskContext(history);
+
+  useEffect(() => {
+    api.me().then((r) => setUser(r.user)).catch(() => nav('/login'));
+  }, [nav]);
 
   useEffect(() => {
     localStorage.setItem('tt_sidebar', sidebarOpen ? 'open' : 'closed');
@@ -76,7 +83,9 @@ export function Chat() {
   }, [loadHistory, refreshConvs]);
 
   return (
-    <div className="flex h-screen bg-[#0a0b0f] text-[#e8eaf0]">
+    <div className="flex flex-col h-screen bg-[#0a0b0f] text-[#e8eaf0]">
+      <Nav user={user} />
+      <div className="flex flex-1 overflow-hidden">
       {sidebarOpen && <ConversationList conversations={conversations} onNew={newConv} />}
       <main className="flex-1 flex flex-col">
         {!id ? (
@@ -148,6 +157,7 @@ export function Chat() {
         )}
       </main>
       {rightOpen && <TaskContextPanel tasks={tasks} asOf={null} />}
+      </div>
     </div>
   );
 }

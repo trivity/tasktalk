@@ -7,7 +7,7 @@ import { executeTool, type ExecuteToolResult } from './execute-tool.js';
 import { buildPreview } from './preview.js';
 import { TurnMcpPool } from '../mcp/client.js';
 import { db } from '../db/client.js';
-import { messages, toolCalls, cuWorkspaces, pendingWrites } from '../db/schema.js';
+import { messages, toolCalls, cuWorkspaces, cuTasks, pendingWrites } from '../db/schema.js';
 import { eq, inArray, sql } from 'drizzle-orm';
 import { buildSystemPrompt } from './system-prompt.js';
 import { bumpLastMessageAt } from '../db/queries/conversations.js';
@@ -59,10 +59,14 @@ export async function runTurn(opts: {
     const t = r.lastIncrementalSyncAt ?? new Date(0);
     return t.getTime() < acc.getTime() ? t : acc;
   }, new Date());
-  const taskCountRow = opts.workspaceIds.length > 0
-    ? await db.execute(sql`SELECT COUNT(*)::int AS c FROM cu_tasks WHERE workspace_id = ANY(${opts.workspaceIds})`)
-    : [];
-  const taskCount = Number(((taskCountRow as unknown as Array<{ c: number }>)[0]?.c ?? 0));
+  let taskCount = 0;
+  if (opts.workspaceIds.length > 0) {
+    const [row] = await db
+      .select({ c: sql<number>`count(*)::int` })
+      .from(cuTasks)
+      .where(inArray(cuTasks.workspaceId, opts.workspaceIds));
+    taskCount = row?.c ?? 0;
+  }
 
   const systemPrompt = buildSystemPrompt({
     userName: opts.userName,

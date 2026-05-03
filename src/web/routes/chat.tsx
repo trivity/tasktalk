@@ -1,7 +1,9 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { PanelLeft, PanelRight, Pencil } from 'lucide-react';
+import { toast } from 'sonner';
 import { api } from '../lib/rpc.js';
+import { slashCommands } from '../lib/slash-commands.js';
 import { useConversations } from '../hooks/use-conversations.js';
 import { useMessageStream } from '../hooks/use-message-stream.js';
 import { useTaskContext } from '../hooks/use-task-context.js';
@@ -130,6 +132,26 @@ export function Chat() {
     void refreshConvs();
   }, [loadHistory, refreshConvs]);
 
+  const onSendSuggestion = useCallback((text: string) => {
+    void onSend(text);
+  }, [id, history.length, conversations]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const onCommandAction = useCallback(async (action: 'refresh' | 'help') => {
+    if (action === 'refresh') {
+      try {
+        await api.clickupSyncNow();
+        toast.success('Sync started. Snapshot will refresh shortly.');
+      } catch (e: any) {
+        toast.error(`Sync failed: ${e?.message ?? 'unknown error'}`);
+      }
+      return;
+    }
+    if (action === 'help') {
+      const lines = slashCommands.map((c) => `${c.label}  ${c.description}`).join('\n');
+      toast(`Slash commands:\n${lines}`, { duration: 10000 });
+    }
+  }, []);
+
   return (
     <div className="flex flex-col h-screen bg-bg text-text">
       <Nav user={user} />
@@ -231,9 +253,19 @@ export function Chat() {
                   </div>
                 </div>
               ) : (
-                <MessageStream history={history} streaming={streaming} onConfirmResolved={onConfirmResolved} />
+                <MessageStream
+                  history={history}
+                  streaming={streaming}
+                  onConfirmResolved={onConfirmResolved}
+                  onSendSuggestion={onSendSuggestion}
+                  busy={!!streaming && !streaming.done}
+                />
               )}
-              <Composer disabled={!!streaming && !streaming.done} onSend={onSend} />
+              <Composer
+                disabled={!!streaming && !streaming.done}
+                onSend={onSend}
+                onCommandAction={onCommandAction}
+              />
             </>
           )}
         </main>

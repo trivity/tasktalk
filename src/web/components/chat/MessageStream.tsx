@@ -3,6 +3,8 @@ import remarkGfm from 'remark-gfm';
 import { ToolCallPill } from './ToolCallPill.js';
 import { ConfirmCard, type Preview } from './ConfirmCard.js';
 import { SystemEventNote } from './SystemEventNote.js';
+import { SuggestionChips } from './SuggestionChips.js';
+import { stripSuggestionsBlock, parseSuggestions } from '../../lib/suggestions.js';
 import type { StreamMessage } from '../../hooks/use-message-stream.js';
 
 type PersistedMessage = { id: string; role: string; content: any };
@@ -11,6 +13,8 @@ type Props = {
   history: PersistedMessage[];
   streaming: StreamMessage | null;
   onConfirmResolved: () => void;
+  onSendSuggestion: (text: string) => void;
+  busy: boolean;
 };
 
 const markdownComponents = {
@@ -47,7 +51,7 @@ const markdownComponents = {
   hr: () => <hr className="border-border my-4" />,
 };
 
-export function MessageStream({ history, streaming, onConfirmResolved }: Props) {
+export function MessageStream({ history, streaming, onConfirmResolved, onSendSuggestion, busy }: Props) {
   return (
     <div className="flex-1 overflow-y-auto px-6 py-8 space-y-5">
       {history.map((m) => {
@@ -62,7 +66,9 @@ export function MessageStream({ history, streaming, onConfirmResolved }: Props) 
         }
         if (m.role === 'assistant') {
           const tu = (m.content?.tool_uses as Array<{ id: string; name: string }>) ?? [];
-          const text = m.content?.text ?? '';
+          const rawText = m.content?.text ?? '';
+          const cleanText = stripSuggestionsBlock(rawText);
+          const suggestions = parseSuggestions(rawText);
           return (
             <div key={m.id} className="text-text text-[15px] leading-relaxed max-w-[92%]">
               {tu.length > 0 && (
@@ -72,11 +78,12 @@ export function MessageStream({ history, streaming, onConfirmResolved }: Props) 
                   ))}
                 </div>
               )}
-              {text && (
+              {cleanText && (
                 <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-                  {text}
+                  {cleanText}
                 </ReactMarkdown>
               )}
+              <SuggestionChips suggestions={suggestions} onPick={onSendSuggestion} disabled={busy} />
             </div>
           );
         }
@@ -102,7 +109,7 @@ export function MessageStream({ history, streaming, onConfirmResolved }: Props) 
           )}
           {streaming.text && (
             <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-              {streaming.text}
+              {stripSuggestionsBlock(streaming.text)}
             </ReactMarkdown>
           )}
           {!streaming.done && <span className="inline-block w-2 h-4 bg-accent ml-1 animate-pulse align-middle" />}

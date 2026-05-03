@@ -31,7 +31,7 @@ beforeAll(async () => {
 
 describe('aggregates', () => {
   it('aggregateWorkload counts open tasks per assignee', async () => {
-    const r = await aggregateWorkload({ workspaceId: WS, groupBy: 'assignee' });
+    const r = await aggregateWorkload({ workspaceIds: [WS], groupBy: 'assignee' });
     const map = Object.fromEntries(r.results.map((g) => [g.group_id, g.count]));
     expect(map[M1]).toBe(1);
     expect(map[M2]).toBe(2);
@@ -40,7 +40,7 @@ describe('aggregates', () => {
   it('aggregateThroughput counts completions in window', async () => {
     const since = new Date(Date.now() - 7 * 86400_000).toISOString().slice(0, 10);
     const until = new Date(Date.now() + 1 * 86400_000).toISOString().slice(0, 10);
-    const r = await aggregateThroughput({ workspaceId: WS, since, until });
+    const r = await aggregateThroughput({ workspaceIds: [WS], since, until });
     expect(r.total_completed).toBe(1);
   });
 });

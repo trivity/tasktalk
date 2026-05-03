@@ -8,7 +8,7 @@ import { buildPreview } from './preview.js';
 import { TurnMcpPool } from '../mcp/client.js';
 import { db } from '../db/client.js';
 import { messages, toolCalls, cuWorkspaces, pendingWrites } from '../db/schema.js';
-import { eq, sql } from 'drizzle-orm';
+import { eq, inArray, sql } from 'drizzle-orm';
 import { buildSystemPrompt } from './system-prompt.js';
 import { bumpLastMessageAt } from '../db/queries/conversations.js';
 
@@ -27,7 +27,7 @@ export async function runTurn(opts: {
   userText: string;
   userName: string | null;
   userEmail: string;
-  workspaceId: string;
+  workspaceIds: string[];
   workspaceName: string;
   emit: (event: TurnEvent) => Promise<void> | void;
 }): Promise<void> {
@@ -51,15 +51,25 @@ export async function runTurn(opts: {
     .where(eq(messages.conversationId, opts.conversationId))
     .orderBy(messages.createdAt);
 
-  const [ws] = await db.select().from(cuWorkspaces).where(eq(cuWorkspaces.workspaceId, opts.workspaceId)).limit(1);
-  const taskCountRow = await db.execute(sql`SELECT COUNT(*)::int AS c FROM cu_tasks WHERE workspace_id = ${opts.workspaceId}`);
+  const wsRows = opts.workspaceIds.length > 0
+    ? await db.select().from(cuWorkspaces).where(inArray(cuWorkspaces.workspaceId, opts.workspaceIds))
+    : [];
+  // Pick the OLDEST last_incremental_sync_at across workspaces — worst-case staleness.
+  const oldestSync = wsRows.reduce<Date>((acc, r) => {
+    const t = r.lastIncrementalSyncAt ?? new Date(0);
+    return t.getTime() < acc.getTime() ? t : acc;
+  }, new Date());
+  const taskCountRow = opts.workspaceIds.length > 0
+    ? await db.execute(sql`SELECT COUNT(*)::int AS c FROM cu_tasks WHERE workspace_id = ANY(${opts.workspaceIds})`)
+    : [];
   const taskCount = Number(((taskCountRow as unknown as Array<{ c: number }>)[0]?.c ?? 0));
 
   const systemPrompt = buildSystemPrompt({
     userName: opts.userName,
     userEmail: opts.userEmail,
     workspaceName: opts.workspaceName,
-    mirrorAsOf: ws?.lastIncrementalSyncAt ?? new Date(0),
+    workspaceCount: opts.workspaceIds.length,
+    mirrorAsOf: wsRows.length > 0 ? oldestSync : new Date(0),
     taskCount,
     now: new Date(),
   });
@@ -128,7 +138,7 @@ export async function runTurn(opts: {
       const toolResultsBlock: Anthropic.MessageParam = { role: 'user', content: [] };
       for (const tu of reads) {
         await opts.emit({ type: 'tool_use_start', tool_name: tu.name, tool_use_id: tu.id });
-        const result = await executeTool({ name: tu.name, args: tu.input, workspaceId: opts.workspaceId, pool });
+        const result = await executeTool({ name: tu.name, args: tu.input, workspaceIds: opts.workspaceIds, pool });
         await opts.emit({ type: 'tool_use_complete', tool_use_id: tu.id, router_path: result.routerPath, latency_ms: result.latencyMs, ok: result.ok });
         collectedToolUses.push({ id: tu.id, name: tu.name, input: tu.input, result });
         (toolResultsBlock.content as any[]).push({
@@ -143,7 +153,7 @@ export async function runTurn(opts: {
       for (const tu of writes) {
         let preview: unknown;
         try {
-          preview = await buildPreview({ workspaceId: opts.workspaceId, toolName: tu.name, args: tu.input });
+          preview = await buildPreview({ workspaceIds: opts.workspaceIds, toolName: tu.name, args: tu.input });
         } catch (e) {
           const errMsg = String((e as Error).message ?? e);
           (toolResultsBlock.content as any[]).push({

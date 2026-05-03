@@ -22,19 +22,19 @@ beforeAll(async () => {
 
 describe('querySnapshot', () => {
   it('filters by workspace and status', async () => {
-    const r = await querySnapshot({ workspaceId: WS, filters: { status: ['open'] } });
+    const r = await querySnapshot({ workspaceIds: [WS], filters: { status: ['open'] } });
     expect(r.results).toHaveLength(2);
     expect(r.data_source).toBe('snapshot');
   });
 
   it('filters by assignee (JSONB)', async () => {
-    const r = await querySnapshot({ workspaceId: WS, filters: { assigneeId: 'u1' } });
+    const r = await querySnapshot({ workspaceIds: [WS], filters: { assigneeId: 'u1' } });
     expect(r.results).toHaveLength(1);
     expect(r.results[0].task_id).toBe(T1);
   });
 
   it('refuses to bypass workspace boundary even if filter is empty', async () => {
-    const r = await querySnapshot({ workspaceId: 'NOPE', filters: {} });
+    const r = await querySnapshot({ workspaceIds: ['NOPE'], filters: {} });
     expect(r.results).toHaveLength(0);
   });
 });

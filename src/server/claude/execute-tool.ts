@@ -22,7 +22,7 @@ export type ExecuteToolResult =
 export async function executeTool(opts: {
   name: string;
   args: Record<string, unknown>;
-  workspaceId: string;
+  workspaceIds: string[];
   pool: TurnMcpPool;
 }): Promise<ExecuteToolResult> {
   const start = Date.now();
@@ -32,45 +32,45 @@ export async function executeTool(opts: {
 
     switch (opts.name) {
       case 'list_workspaces':
-        result = await executeListWorkspaces(opts.workspaceId);
+        result = await executeListWorkspaces(opts.workspaceIds);
         routerPath = 'snapshot';
         break;
       case 'list_org_structure':
-        result = await executeListOrgStructure(opts.workspaceId);
+        result = await executeListOrgStructure(opts.workspaceIds);
         routerPath = 'snapshot';
         break;
       case 'list_custom_fields': {
         const a = listCustomFieldsArgs.parse(opts.args);
-        result = await executeListCustomFields(opts.workspaceId, a.scope_id);
+        result = await executeListCustomFields(opts.workspaceIds, a.scope_id);
         routerPath = 'snapshot';
         break;
       }
       case 'get_team_members':
-        result = await executeGetTeamMembers(opts.workspaceId);
+        result = await executeGetTeamMembers(opts.workspaceIds);
         routerPath = 'snapshot';
         break;
       case 'query_tasks': {
         const a = queryTasksArgs.parse(opts.args);
-        const r = await executeQueryTasks(opts.workspaceId, a, opts.pool);
+        const r = await executeQueryTasks(opts.workspaceIds, a, opts.pool);
         result = r;
         routerPath = r.data_source as typeof routerPath;
         break;
       }
       case 'get_task': {
         const a = getTaskArgs.parse(opts.args);
-        result = await executeGetTask(opts.workspaceId, a.task_id, opts.pool);
+        result = await executeGetTask(opts.workspaceIds, a.task_id, opts.pool);
         routerPath = 'live';
         break;
       }
       case 'aggregate_workload': {
         const a = aggregateWorkloadArgs.parse(opts.args);
-        result = await executeAggregateWorkload(opts.workspaceId, a.group_by);
+        result = await executeAggregateWorkload(opts.workspaceIds, a.group_by);
         routerPath = 'snapshot';
         break;
       }
       case 'aggregate_throughput': {
         const a = aggregateThroughputArgs.parse(opts.args);
-        result = await executeAggregateThroughput(opts.workspaceId, a.since, a.until);
+        result = await executeAggregateThroughput(opts.workspaceIds, a.since, a.until);
         routerPath = 'snapshot';
         break;
       }

@@ -5,7 +5,7 @@ import { TurnMcpPool } from '../../../src/server/mcp/client.js';
 describe('executeTool', () => {
   it('rejects unknown tool name', async () => {
     const pool = new TurnMcpPool('user-x');
-    const r = await executeTool({ name: 'bogus', args: {}, workspaceId: 'ws', pool });
+    const r = await executeTool({ name: 'bogus', args: {}, workspaceIds: ['ws'], pool });
     expect(r.error).toMatch(/unknown tool/i);
   });
 });

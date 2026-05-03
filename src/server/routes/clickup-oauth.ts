@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import { db } from '../db/client.js';
 import { clickupConnections, cuWorkspaces } from '../db/schema.js';
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, isNull, inArray } from 'drizzle-orm';
 import { env } from '../env.js';
 import { encryptToken } from '../db/encrypt.js';
 import {
@@ -50,26 +50,43 @@ export const clickupOauthRoutes = new Hono()
     const redirectUri = `${env.BASE_URL}/api/clickup/callback`;
     const tokenResp = await exchangeCodeForToken({ code, codeVerifier, redirectUri });
 
-    // ClickUp returns the workspace id in the token scope or via a separate call;
-    // for now, fetch the user's authorized workspaces via a small probe.
-    const workspaceId = await fetchPrimaryWorkspaceId(tokenResp.access_token);
+    // Enumerate ALL workspaces this token can see. The MCP may either:
+    //   - reject `clickup_get_workspace_hierarchy` with "Multiple workspaces
+    //     available: <ids>" error when the user has more than one
+    //   - return a single-workspace hierarchy when exactly one
+    const workspaceIds = await enumerateWorkspaces(tokenResp.access_token);
 
     // ClickUp's MCP OAuth registration only grants 'authorization_code' (no refresh_token
     // grant), so tokenResp.refresh_token is often undefined. Encrypt empty in that case;
     // auto-refresh will be a no-op until the access token expires (typical: long TTL).
     const refreshTokenPlain = tokenResp.refresh_token ?? '';
-    await db.insert(clickupConnections).values({
-      userId: u.id,
-      workspaceId,
-      accessTokenEnc: encryptToken(tokenResp.access_token, env.TOKEN_ENCRYPTION_KEY),
-      refreshTokenEnc: encryptToken(refreshTokenPlain, env.TOKEN_ENCRYPTION_KEY),
-      expiresAt: new Date(Date.now() + (tokenResp.expires_in ?? 86400 * 30) * 1000),
-      scopes: tokenResp.scope ?? null,
-    });
+    const accessTokenEnc = encryptToken(tokenResp.access_token, env.TOKEN_ENCRYPTION_KEY);
+    const refreshTokenEnc = encryptToken(refreshTokenPlain, env.TOKEN_ENCRYPTION_KEY);
+    const expiresAt = new Date(Date.now() + (tokenResp.expires_in ?? 86400 * 30) * 1000);
+
+    // Insert one connection row per workspace. They share the same encrypted token.
+    // If discovery failed entirely we fall back to one placeholder row so the
+    // connection still exists and the worker can resolve it later.
+    const idsToInsert = workspaceIds.length > 0 ? workspaceIds : [`pending-${Date.now()}`];
+    for (const wsId of idsToInsert) {
+      await db.insert(clickupConnections).values({
+        userId: u.id,
+        workspaceId: wsId,
+        accessTokenEnc,
+        refreshTokenEnc,
+        expiresAt,
+        scopes: tokenResp.scope ?? null,
+      });
+    }
 
     const boss = await getBoss();
+    // Single enqueue — runInitialSync iterates all of the user's workspaces
+    // when no explicit workspaceId is provided.
     await boss.send(QUEUE_INITIAL_SYNC, { userId: u.id });
-    try { await ensureWorkspaceWebhook(u.id, workspaceId); } catch (e) { console.error('[clickup] webhook register failed', e); }
+    for (const wsId of idsToInsert) {
+      if (wsId.startsWith('pending-')) continue;
+      try { await ensureWorkspaceWebhook(u.id, wsId); } catch (e) { console.error('[clickup] webhook register failed', e); }
+    }
 
     return c.redirect('/settings?clickup=connected');
   })
@@ -83,43 +100,60 @@ export const clickupOauthRoutes = new Hono()
   })
   .get('/status', requireAuth, async (c) => {
     const u = c.get('user');
-    const [row] = await db
-      .select({ workspaceId: clickupConnections.workspaceId, expiresAt: clickupConnections.expiresAt, tombstonedAt: clickupConnections.tombstonedAt })
+    const rows = await db
+      .select({ workspaceId: clickupConnections.workspaceId, expiresAt: clickupConnections.expiresAt })
       .from(clickupConnections)
-      .where(and(eq(clickupConnections.userId, u.id), isNull(clickupConnections.tombstonedAt)))
-      .limit(1);
-    if (!row) return c.json({ connected: false, connection: null });
-    // Surface workspace-level sync state if we have one for this connection's
-    // workspace, so the UI can show 'syncing'/'done'/'never' status.
-    const [ws] = await db
-      .select({
-        lastFullSyncAt: cuWorkspaces.lastFullSyncAt,
-        lastIncrementalSyncAt: cuWorkspaces.lastIncrementalSyncAt,
-        syncState: cuWorkspaces.syncState,
-      })
-      .from(cuWorkspaces)
-      .where(eq(cuWorkspaces.workspaceId, row.workspaceId))
-      .limit(1);
+      .where(and(eq(clickupConnections.userId, u.id), isNull(clickupConnections.tombstonedAt)));
+    if (rows.length === 0) return c.json({ connected: false, connections: [] });
+
+    const workspaceIds = rows.map((r) => r.workspaceId);
+    const wsRows = workspaceIds.length > 0
+      ? await db
+          .select({
+            workspaceId: cuWorkspaces.workspaceId,
+            name: cuWorkspaces.name,
+            lastFullSyncAt: cuWorkspaces.lastFullSyncAt,
+            lastIncrementalSyncAt: cuWorkspaces.lastIncrementalSyncAt,
+            syncState: cuWorkspaces.syncState,
+          })
+          .from(cuWorkspaces)
+          .where(inArray(cuWorkspaces.workspaceId, workspaceIds))
+      : [];
+    const wsByid = new Map(wsRows.map((w) => [w.workspaceId, w]));
+
+    const connections = rows.map((r) => {
+      const ws = wsByid.get(r.workspaceId);
+      return {
+        workspaceId: r.workspaceId,
+        name: ws?.name ?? null,
+        pending: r.workspaceId.startsWith('pending-'),
+        lastFullSyncAt: ws?.lastFullSyncAt ?? null,
+        lastIncrementalSyncAt: ws?.lastIncrementalSyncAt ?? null,
+        syncState: ws?.syncState ?? null,
+      };
+    });
+
     return c.json({
       connected: true,
-      connection: row,
-      workspace: ws ?? null,
-      pending_workspace_id: row.workspaceId.startsWith('pending-'),
+      connections,
     });
   })
   .post('/sync-now', requireAuth, async (c) => {
     const u = c.get('user');
-    const [row] = await db
-      .select()
+    const rows = await db
+      .select({ workspaceId: clickupConnections.workspaceId })
       .from(clickupConnections)
-      .where(and(eq(clickupConnections.userId, u.id), isNull(clickupConnections.tombstonedAt)))
-      .limit(1);
-    if (!row) return c.json({ error: 'not_connected' }, 400);
+      .where(and(eq(clickupConnections.userId, u.id), isNull(clickupConnections.tombstonedAt)));
+    if (rows.length === 0) return c.json({ error: 'not_connected' }, 400);
     // Run sync inline so the user gets a definitive done/error response.
     // For larger workspaces this can take minutes; the UI shows a spinner.
     try {
       const { runInitialSync } = await import('../sync/initial-sync.js');
-      await runInitialSync({ userId: u.id });
+      // Iterate every active workspace for this user. Not all may be ready
+      // (placeholder ids); runInitialSync handles those.
+      for (const r of rows) {
+        await runInitialSync({ userId: u.id, workspaceId: r.workspaceId });
+      }
       return c.json({ ok: true });
     } catch (err) {
       console.error('[sync-now] failed', err);
@@ -127,68 +161,72 @@ export const clickupOauthRoutes = new Hono()
     }
   });
 
+type Json = Record<string, unknown>;
+
 /**
- * Discover the user's primary ClickUp workspace_id via the MCP server.
- * The MCP-issued OAuth token is only valid against mcp.clickup.com (NOT
- * api.clickup.com), so we connect to MCP and look at what tools / resources
- * its session exposes for workspace identification.
- *
- * If discovery fails (the MCP server doesn't expose a clear workspace tool,
- * or its response shape isn't what we expect), we fall back to an opaque
- * placeholder and let the worker resolve it on first sync. The connection
- * still gets created — the OAuth flow doesn't fail just because we can't
- * pin down the workspace id at callback time.
+ * Enumerate every ClickUp workspace this access token has access to.
+ * The MCP server returns one of two shapes when called with no args:
+ *   - "Multiple workspaces available: <id1>, <id2>" error → parse ids
+ *   - single-workspace hierarchy → extract its id
+ * If both fail, returns []. Caller falls back to a placeholder row.
  */
-async function fetchPrimaryWorkspaceId(accessToken: string): Promise<string> {
+async function enumerateWorkspaces(accessToken: string): Promise<string[]> {
   let session: Awaited<ReturnType<typeof openMcpSessionWithToken>> | null = null;
   try {
     session = await openMcpSessionWithToken(accessToken);
 
-    // Inspect what tools and resources the MCP server exposes for this user.
-    // We look for any that surface workspace / team / space identifiers.
-    const toolsResp = await session.client.listTools();
-    const toolNames = toolsResp.tools.map((t) => t.name);
-    console.log('[clickup-oauth] MCP tools available:', toolNames);
-
-    // ClickUp's MCP exposes `clickup_get_workspace_hierarchy` which returns the
-    // full tree (workspace → spaces → folders → lists) in one call — perfect for
-    // discovery. We try it first; fall back to other plausible names.
-    const candidates = [
-      'clickup_get_workspace_hierarchy',
-      'clickup_get_workspace_members', // workspace_id is in member objects
-      'clickup_get_workspaces', 'clickup_list_workspaces',
-      'clickup_get_teams', 'clickup_list_teams',
-    ];
-    for (const name of candidates) {
-      if (!toolNames.includes(name)) continue;
-      try {
-        const result = await session.client.callTool({ name, arguments: {} });
-        const wsId = extractWorkspaceId(result);
-        if (wsId) {
-          console.log(`[clickup-oauth] discovered workspace_id=${wsId} via ${name}`);
-          return wsId;
-        }
-        console.log(`[clickup-oauth] ${name} returned but no workspace_id extracted; raw:`, JSON.stringify(result).slice(0, 500));
-      } catch (e) {
-        console.warn(`[clickup-oauth] ${name} failed:`, (e as Error).message);
-      }
+    let result: unknown;
+    try {
+      result = await session.client.callTool({
+        name: 'clickup_get_workspace_hierarchy',
+        arguments: {},
+      });
+    } catch (e) {
+      console.warn('[clickup-oauth] enumerate: hierarchy call threw:', (e as Error).message);
+      return [];
     }
 
-    // Last resort: list resources and look for a workspace in the URI/metadata.
+    // Multi-workspace error path — the response carries isError + a text message
+    // listing the available ids.
+    const multi = parseMultiWorkspaceError(result);
+    if (multi.length > 0) {
+      console.log(`[clickup-oauth] enumerated ${multi.length} workspaces: ${multi.join(', ')}`);
+      return multi;
+    }
+
+    // Single workspace path — the hierarchy returned successfully; extract the id.
+    const single = extractWorkspaceId(result);
+    if (single) {
+      console.log(`[clickup-oauth] single workspace discovered: ${single}`);
+      return [single];
+    }
+
+    // Fallback: scan resources.
     try {
       const resourcesResp = await session.client.listResources();
-      console.log('[clickup-oauth] MCP resources:', resourcesResp.resources.map((r) => r.uri));
       for (const r of resourcesResp.resources) {
         const m = r.uri.match(/(?:workspace|team)[/_:](\d+)/i);
-        if (m) return m[1]!;
+        if (m) return [m[1]!];
       }
-    } catch { /* server may not expose resources */ }
+    } catch { /* no resources */ }
 
-    console.warn('[clickup-oauth] could not discover workspace_id; using placeholder. Initial sync will resolve it.');
-    return `pending-${Date.now()}`;
+    console.warn('[clickup-oauth] could not enumerate workspaces; raw:', JSON.stringify(result).slice(0, 500));
+    return [];
   } finally {
     if (session) await session.close();
   }
+}
+
+function parseMultiWorkspaceError(result: unknown): string[] {
+  if (!result || typeof result !== 'object') return [];
+  const r = result as Json;
+  if (!r.isError) return [];
+  const text = Array.isArray(r.content)
+    ? (r.content as Array<{ type?: string; text?: string }>).map((b) => b.text ?? '').join(' ')
+    : '';
+  const match = text.match(/Available workspaces?:\s*([\d,\s]+)/i);
+  if (!match) return [];
+  return match[1]!.split(/[,\s]+/).map((s) => s.trim()).filter((s) => /^\d+$/.test(s));
 }
 
 function extractWorkspaceId(result: unknown): string | null {
@@ -205,7 +243,6 @@ function extractWorkspaceId(result: unknown): string | null {
   }
 
   // get_workspace_hierarchy may return a tree with the workspace at the root.
-  // Common shapes: { workspace: { id, ... } } or { id, name, spaces: [...] }
   if (r.workspace && typeof r.workspace === 'object') {
     const ws = r.workspace as Record<string, unknown>;
     if (ws.id != null) return String(ws.id);
@@ -214,21 +251,25 @@ function extractWorkspaceId(result: unknown): string | null {
     const t = r.team as Record<string, unknown>;
     if (t.id != null) return String(t.id);
   }
-  // Sometimes the root object IS the workspace (has id + spaces siblings).
+  // Newer hierarchy shape: { hierarchy: { root: { id, name, children: [...] } } }
+  if (r.hierarchy && typeof r.hierarchy === 'object') {
+    const h = r.hierarchy as Record<string, unknown>;
+    if (h.root && typeof h.root === 'object') {
+      const rt = h.root as Record<string, unknown>;
+      if (rt.id != null) return String(rt.id);
+    }
+  }
   if (r.id != null && Array.isArray(r.spaces)) return String(r.id);
-  if (r.id != null && typeof r.name === 'string' && r.id != null && String(r.id).match(/^\d+$/)) {
+  if (r.id != null && typeof r.name === 'string' && String(r.id).match(/^\d+$/)) {
     return String(r.id);
   }
 
-  // Spaces in any shape often carry team_id / workspace_id.
   if (Array.isArray(r.spaces) && r.spaces.length > 0) {
     const first = r.spaces[0] as Record<string, unknown>;
     const teamId = first.team_id ?? first.teamId ?? first.workspace_id ?? first.workspaceId;
     if (teamId != null) return String(teamId);
   }
 
-  // get_workspace_members returns { members: [{ user: {...}, workspace_id?: ... }, ...] }
-  // or sometimes the team is at the top level.
   if (Array.isArray(r.members) && r.members.length > 0) {
     const first = r.members[0] as Record<string, unknown>;
     const wsId = first.workspace_id ?? first.team_id;

@@ -15,9 +15,14 @@ type AiCredsState = {
 
 type ClickUpStatus = {
   connected: boolean;
-  connection?: { workspaceId: string } | null;
-  workspace?: { lastIncrementalSyncAt?: string | null; syncState?: { phase?: string; listsDone?: number; listsTotal?: number } } | null;
-  pending_workspace_id?: boolean;
+  connections: Array<{
+    workspaceId: string;
+    name: string | null;
+    pending: boolean;
+    lastFullSyncAt: string | null;
+    lastIncrementalSyncAt: string | null;
+    syncState: { phase?: string; listsDone?: number; listsTotal?: number } | null;
+  }>;
 };
 
 export function Settings() {
@@ -236,18 +241,28 @@ export function Settings() {
           <h2 className="text-[18px] font-semibold text-text">ClickUp connection</h2>
           {connected ? (
             <>
-              {cuStatusObj?.workspace?.lastIncrementalSyncAt ? (
-                <p className="text-sm text-text-muted">
-                  Last sync: {new Date(cuStatusObj.workspace.lastIncrementalSyncAt).toLocaleString()}
-                  {cuStatusObj.workspace.syncState?.phase && cuStatusObj.workspace.syncState.phase !== 'done' && (
-                    <span className="ml-2 text-warning">
-                      · {cuStatusObj.workspace.syncState.phase} ({cuStatusObj.workspace.syncState.listsDone ?? 0}/{cuStatusObj.workspace.syncState.listsTotal ?? '?'} lists)
-                    </span>
-                  )}
-                </p>
-              ) : (
-                <p className="text-sm text-warning">Never synced — refresh to populate.</p>
-              )}
+              <ul className="space-y-2">
+                {(cuStatusObj?.connections ?? []).map((conn) => (
+                  <li key={conn.workspaceId} className="text-sm text-text-muted">
+                    <span className="font-medium text-text">{conn.name ?? 'Workspace'}</span>
+                    <span className="text-text-subtle"> (id {conn.workspaceId})</span>
+                    {conn.pending ? (
+                      <span className="ml-2 text-warning">· pending workspace resolution</span>
+                    ) : conn.lastIncrementalSyncAt ? (
+                      <>
+                        <span className="ml-2">· Last sync: {new Date(conn.lastIncrementalSyncAt).toLocaleString()}</span>
+                        {conn.syncState?.phase && conn.syncState.phase !== 'done' && (
+                          <span className="ml-2 text-warning">
+                            · {conn.syncState.phase} ({conn.syncState.listsDone ?? 0}/{conn.syncState.listsTotal ?? '?'} lists)
+                          </span>
+                        )}
+                      </>
+                    ) : (
+                      <span className="ml-2 text-warning">· never synced</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
               <div className="flex gap-2 items-center">
                 <button
                   onClick={refreshSnapshot}
@@ -265,7 +280,7 @@ export function Settings() {
                 </button>
               </div>
               <p className="text-xs text-text-subtle">
-                Refresh re-pulls your workspace tree, members, and tasks from ClickUp. Can take a minute or two for large workspaces.
+                Refresh re-pulls every connected workspace's tree, members, and tasks from ClickUp. Can take a minute or two for large workspaces.
               </p>
             </>
           ) : (

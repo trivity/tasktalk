@@ -5,7 +5,7 @@ import { zValidator } from '@hono/zod-validator';
 import { requireAuth } from '../auth/middleware.js';
 import { db } from '../db/client.js';
 import { pendingWrites, conversations, clickupConnections, cuWorkspaces, messages } from '../db/schema.js';
-import { and, eq, gt, isNull } from 'drizzle-orm';
+import { and, eq, gt, inArray, isNull } from 'drizzle-orm';
 import { executeWrite } from '../claude/write-executor.js';
 import { runTurn } from '../claude/turn-loop.js';
 
@@ -40,14 +40,16 @@ export const confirmWriteRoutes = new Hono()
       return c.json({ ok: true, status: 'denied' });
     }
 
-    const [conn] = await db.select().from(clickupConnections)
-      .where(and(eq(clickupConnections.userId, u.id), isNull(clickupConnections.tombstonedAt))).limit(1);
-    if (!conn) return c.json({ error: 'clickup_not_connected' }, 400);
+    const conns = await db.select().from(clickupConnections)
+      .where(and(eq(clickupConnections.userId, u.id), isNull(clickupConnections.tombstonedAt)));
+    if (conns.length === 0) return c.json({ error: 'clickup_not_connected' }, 400);
+    const workspaceIds = conns.map((c) => c.workspaceId).filter((id) => !id.startsWith('pending-'));
+    if (workspaceIds.length === 0) return c.json({ error: 'no_workspace_synced' }, 400);
 
     const result = await executeWrite({
       userId: u.id,
       conversationId: pending.conversationId,
-      workspaceId: conn.workspaceId,
+      workspaceIds,
       messageId: null,
       toolName: pending.toolName as 'create_task' | 'update_task' | 'add_comment' | 'delete_task',
       args: pending.args,
@@ -68,7 +70,12 @@ export const confirmWriteRoutes = new Hono()
 
     // continue the turn: stream Claude's reaction to the result
     const [conv] = await db.select().from(conversations).where(eq(conversations.id, pending.conversationId)).limit(1);
-    const [ws] = await db.select().from(cuWorkspaces).where(eq(cuWorkspaces.workspaceId, conn.workspaceId)).limit(1);
+    const wsRows = await db.select().from(cuWorkspaces).where(inArray(cuWorkspaces.workspaceId, workspaceIds));
+    const wsName = wsRows.length === 0
+      ? '(unknown)'
+      : wsRows.length === 1
+        ? (wsRows[0]!.name ?? '(unknown)')
+        : `${wsRows[0]!.name ?? 'Workspace'} (+${wsRows.length - 1} more)`;
     void conv;
 
     return streamSSE(c, async (sse) => {
@@ -80,8 +87,8 @@ export const confirmWriteRoutes = new Hono()
           : `[system: write '${pending.toolName}' confirmed but failed: ${result.error}]`,
         userName: u.name,
         userEmail: u.email,
-        workspaceId: conn.workspaceId,
-        workspaceName: ws?.name ?? '(unknown)',
+        workspaceIds,
+        workspaceName: wsName,
         emit: async (event) => { await sse.writeSSE({ data: JSON.stringify(event) }); },
       });
       await sse.writeSSE({ event: 'done', data: '{}' });

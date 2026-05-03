@@ -31,9 +31,14 @@ export const api = {
   }),
   clickupStatus: () => request<{
     connected: boolean;
-    connection?: { workspaceId: string } | null;
-    workspace?: { lastIncrementalSyncAt?: string | null; syncState?: { phase?: string; listsDone?: number; listsTotal?: number } } | null;
-    pending_workspace_id?: boolean;
+    connections: Array<{
+      workspaceId: string;
+      name: string | null;
+      pending: boolean;
+      lastFullSyncAt: string | null;
+      lastIncrementalSyncAt: string | null;
+      syncState: { phase?: string; listsDone?: number; listsTotal?: number } | null;
+    }>;
   }>('/api/clickup/status'),
   clickupDisconnect: () => request<{ ok: true }>('/api/clickup/disconnect', { method: 'POST' }),
   clickupSyncNow: () => request<{ ok: true }>('/api/clickup/sync-now', { method: 'POST' }),

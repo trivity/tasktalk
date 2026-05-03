@@ -3,7 +3,7 @@ import { streamSSE } from 'hono/streaming';
 import { requireAuth } from '../auth/middleware.js';
 import { db } from '../db/client.js';
 import { auditLog, conversations, clickupConnections, cuWorkspaces } from '../db/schema.js';
-import { and, eq, isNull, desc } from 'drizzle-orm';
+import { and, eq, inArray, isNull, desc } from 'drizzle-orm';
 import { executeWrite } from '../claude/write-executor.js';
 import { runTurn } from '../claude/turn-loop.js';
 
@@ -22,9 +22,11 @@ export const undoRoutes = new Hono()
       .orderBy(desc(auditLog.createdAt)).limit(1);
     if (!last) return c.json({ error: 'nothing_to_undo' }, 400);
 
-    const [conn] = await db.select().from(clickupConnections)
-      .where(and(eq(clickupConnections.userId, u.id), isNull(clickupConnections.tombstonedAt))).limit(1);
-    if (!conn) return c.json({ error: 'clickup_not_connected' }, 400);
+    const conns = await db.select().from(clickupConnections)
+      .where(and(eq(clickupConnections.userId, u.id), isNull(clickupConnections.tombstonedAt)));
+    if (conns.length === 0) return c.json({ error: 'clickup_not_connected' }, 400);
+    const workspaceIds = conns.map((c) => c.workspaceId).filter((id) => !id.startsWith('pending-'));
+    if (workspaceIds.length === 0) return c.json({ error: 'no_workspace_synced' }, 400);
 
     const inverse = inverseAction(last.action, last.before, last.after, last.targetId);
     if (!inverse) return c.json({ error: 'cannot_undo' }, 400);
@@ -32,7 +34,7 @@ export const undoRoutes = new Hono()
     const result = await executeWrite({
       userId: u.id,
       conversationId,
-      workspaceId: conn.workspaceId,
+      workspaceIds,
       messageId: null,
       toolName: inverse.toolName,
       args: inverse.args,
@@ -43,7 +45,12 @@ export const undoRoutes = new Hono()
       await db.update(auditLog).set({ action: 'undo' }).where(eq(auditLog.id, result.auditId));
     }
 
-    const [ws] = await db.select().from(cuWorkspaces).where(eq(cuWorkspaces.workspaceId, conn.workspaceId)).limit(1);
+    const wsRows = await db.select().from(cuWorkspaces).where(inArray(cuWorkspaces.workspaceId, workspaceIds));
+    const wsName = wsRows.length === 0
+      ? '(unknown)'
+      : wsRows.length === 1
+        ? (wsRows[0]!.name ?? '(unknown)')
+        : `${wsRows[0]!.name ?? 'Workspace'} (+${wsRows.length - 1} more)`;
     return streamSSE(c, async (sse) => {
       await runTurn({
         userId: u.id,
@@ -53,8 +60,8 @@ export const undoRoutes = new Hono()
           : `[system: undo failed: ${result.error}]`,
         userName: u.name,
         userEmail: u.email,
-        workspaceId: conn.workspaceId,
-        workspaceName: ws?.name ?? '(unknown)',
+        workspaceIds,
+        workspaceName: wsName,
         emit: async (e) => { await sse.writeSSE({ data: JSON.stringify(e) }); },
       });
       await sse.writeSSE({ event: 'done', data: '{}' });
@@ -81,11 +88,8 @@ function inverseAction(
     return { toolName: 'update_task', args: { task_id: targetId, patch } };
   }
   if (action === 'add_comment') {
-    // ClickUp MCP may or may not expose delete_comment; if it doesn't, return null and the
-    // route returns cannot_undo. Otherwise:
     const commentId = (after as Record<string, unknown> | null)?.id;
     if (!commentId) return null;
-    // not modeled as a write tool; return null and surface "manual delete needed".
     return null;
   }
   if (action === 'delete_task') {

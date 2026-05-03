@@ -3,7 +3,7 @@ import type Anthropic from '@anthropic-ai/sdk';
 export const ANTHROPIC_TOOLS: Anthropic.Tool[] = [
   {
     name: 'list_workspaces',
-    description: 'List the ClickUp workspaces the user is connected to. In MVP, exactly one workspace per user.',
+    description: 'List every ClickUp workspace the user is connected to. The user may have one or many.',
     input_schema: { type: 'object', properties: {} },
   },
   {

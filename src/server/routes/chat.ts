@@ -6,7 +6,7 @@ import { requireAuth } from '../auth/middleware.js';
 import { runTurn } from '../claude/turn-loop.js';
 import { db } from '../db/client.js';
 import { conversations, clickupConnections, cuWorkspaces } from '../db/schema.js';
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 
 const turnBody = z.object({ text: z.string().min(1).max(8000) });
 
@@ -21,12 +21,18 @@ export const chatRoutes = new Hono()
       .where(and(eq(conversations.id, conversationId), eq(conversations.userId, u.id))).limit(1);
     if (!conv) return c.json({ error: 'not_found' }, 404);
 
-    const [conn] = await db.select().from(clickupConnections)
-      .where(and(eq(clickupConnections.userId, u.id), isNull(clickupConnections.tombstonedAt))).limit(1);
-    if (!conn) return c.json({ error: 'clickup_not_connected' }, 400);
+    const conns = await db.select().from(clickupConnections)
+      .where(and(eq(clickupConnections.userId, u.id), isNull(clickupConnections.tombstonedAt)));
+    if (conns.length === 0) return c.json({ error: 'clickup_not_connected' }, 400);
+    const workspaceIds = conns.map((c) => c.workspaceId).filter((id) => !id.startsWith('pending-'));
+    if (workspaceIds.length === 0) return c.json({ error: 'no_workspace_synced' }, 400);
 
-    const [ws] = await db.select().from(cuWorkspaces).where(eq(cuWorkspaces.workspaceId, conn.workspaceId)).limit(1);
-    const workspaceName = ws?.name ?? '(unknown)';
+    const wsRows = await db.select().from(cuWorkspaces).where(inArray(cuWorkspaces.workspaceId, workspaceIds));
+    const wsName = wsRows.length === 0
+      ? '(unknown)'
+      : wsRows.length === 1
+        ? (wsRows[0]!.name ?? '(unknown)')
+        : `${wsRows[0]!.name ?? 'Workspace'} (+${wsRows.length - 1} more)`;
 
     return streamSSE(c, async (sse) => {
       await runTurn({
@@ -35,8 +41,8 @@ export const chatRoutes = new Hono()
         userText: text,
         userName: u.name,
         userEmail: u.email,
-        workspaceId: conn.workspaceId,
-        workspaceName,
+        workspaceIds,
+        workspaceName: wsName,
         emit: async (event) => {
           await sse.writeSSE({ data: JSON.stringify(event) });
         },

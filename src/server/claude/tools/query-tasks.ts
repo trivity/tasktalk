@@ -1,6 +1,6 @@
 import { db } from '../../db/client.js';
-import { cuWorkspaces, cuTasks } from '../../db/schema.js';
-import { eq, and } from 'drizzle-orm';
+import { cuWorkspaces, cuTasks, cuLists } from '../../db/schema.js';
+import { eq, inArray } from 'drizzle-orm';
 import { sql } from 'drizzle-orm';
 import { querySnapshot, type TaskFilters } from '../../db/queries/tasks.js';
 import { decideRoute } from '../router.js';
@@ -11,21 +11,30 @@ import { getBoss, QUEUE_DRIFT } from '../../sync/boss.js';
 import type { QueryTasksArgs, NormalizedReadResult } from '../../../shared/schemas/tools.js';
 
 export async function executeQueryTasks(
-  workspaceId: string,
+  workspaceIds: string[],
   args: QueryTasksArgs,
   pool: TurnMcpPool,
 ): Promise<NormalizedReadResult> {
-  const [ws] = await db
-    .select({ lastSyncAt: cuWorkspaces.lastIncrementalSyncAt })
+  if (workspaceIds.length === 0) {
+    return { data_source: 'snapshot', as_of: new Date(0).toISOString(), results: [], truncated: false };
+  }
+  const wsRows = await db
+    .select({ workspaceId: cuWorkspaces.workspaceId, lastSyncAt: cuWorkspaces.lastIncrementalSyncAt })
     .from(cuWorkspaces)
-    .where(eq(cuWorkspaces.workspaceId, workspaceId))
-    .limit(1);
+    .where(inArray(cuWorkspaces.workspaceId, workspaceIds));
+  // Oldest as_of for staleness reasoning.
+  const oldestSync = wsRows.reduce<Date | null>((acc, r) => {
+    const t = r.lastSyncAt ?? new Date(0);
+    if (acc === null) return t;
+    return t.getTime() < acc.getTime() ? t : acc;
+  }, null);
+
   const countRows = await db
     .select({ count: sql<number>`count(*)::int` })
     .from(cuTasks)
-    .where(and(eq(cuTasks.workspaceId, workspaceId)));
+    .where(inArray(cuTasks.workspaceId, workspaceIds));
   const count = countRows[0]?.count ?? 0;
-  const route = decideRoute({ lastSyncAt: ws?.lastSyncAt ?? null, mirrorEmpty: count === 0 });
+  const route = decideRoute({ lastSyncAt: oldestSync, mirrorEmpty: count === 0 });
 
   const filters: TaskFilters = {
     listId: args.list_id,
@@ -37,38 +46,46 @@ export async function executeQueryTasks(
   };
 
   if (route === 'snapshot') {
-    return await querySnapshot({ workspaceId, filters });
+    return await querySnapshot({ workspaceIds, filters });
   }
 
   if (route === 'live' || route === 'live-first-run') {
+    // Live MCP needs a single workspace_id. Resolve from list_id when given,
+    // else fall back to the first workspace.
+    let liveWorkspaceId = workspaceIds[0]!;
+    if (args.list_id) {
+      const [listRow] = await db
+        .select({ workspaceId: cuLists.workspaceId })
+        .from(cuLists)
+        .where(eq(cuLists.id, args.list_id))
+        .limit(1);
+      if (listRow && workspaceIds.includes(listRow.workspaceId)) {
+        liveWorkspaceId = listRow.workspaceId;
+      }
+    }
+
     try {
       const session = await pool.get();
       const liveResult = await callMcpTool<{ tasks: Array<Record<string, unknown>> }>(
         session,
         'clickup_filter_tasks',
-        mcpFiltersFor(workspaceId, args),
+        mcpFiltersFor(liveWorkspaceId, args),
       );
       const liveTasks = liveResult.tasks ?? [];
 
-      // Live returned empty: this often means our filter args don't match what
-      // ClickUp's MCP expects (filter shape varies). Fall back to snapshot if
-      // the mirror has anything for these filters — better stale data than no
-      // data when the user's actually got tasks.
       if (liveTasks.length === 0 && route === 'live') {
-        const fallback = await querySnapshot({ workspaceId, filters });
+        const fallback = await querySnapshot({ workspaceIds, filters });
         if (fallback.results.length > 0) {
           return { ...fallback, data_source: 'snapshot · live-fallback', fallback_reason: 'live returned empty' };
         }
       }
 
-      // best-effort cache-back
       for (const t of liveTasks) {
-        try { await upsertTask(workspaceId, t); } catch { /* non-fatal */ }
+        try { await upsertTask(liveWorkspaceId, t); } catch { /* non-fatal */ }
       }
-      // queue a sync for next time
       if (route === 'live') {
         const boss = await getBoss();
-        await boss.send(QUEUE_DRIFT, { workspaceId });
+        await boss.send(QUEUE_DRIFT, { workspaceId: liveWorkspaceId });
       }
       return {
         data_source: 'live',
@@ -79,21 +96,19 @@ export async function executeQueryTasks(
       };
     } catch (err) {
       const reason = String((err as Error).message ?? err);
-      const fallback = await querySnapshot({ workspaceId, filters });
+      const fallback = await querySnapshot({ workspaceIds, filters });
       return { ...fallback, data_source: 'snapshot · live-fallback', fallback_reason: reason };
     }
   }
 
-  return await querySnapshot({ workspaceId, filters });
+  return await querySnapshot({ workspaceIds, filters });
 }
 
 function mcpFiltersFor(workspaceId: string, args: QueryTasksArgs): Record<string, unknown> {
   const out: Record<string, unknown> = {};
-  // ClickUp's clickup_filter_tasks always wants workspace_id.
   out.workspace_id = workspaceId;
   if (args.list_id) out.list_id = args.list_id;
   if (args.status) out.statuses = args.status;
-  // ClickUp expects assignees as comma-separated user ids per its REST conventions.
   if (args.assignee_id) out.assignees = String(args.assignee_id);
   if (args.due_before) out.due_date_lt = new Date(args.due_before).getTime();
   if (args.due_after) out.due_date_gt = new Date(args.due_after).getTime();

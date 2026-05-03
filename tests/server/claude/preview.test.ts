@@ -20,7 +20,7 @@ beforeAll(async () => {
 describe('buildPreview', () => {
   it('builds an update_task diff', async () => {
     const p = await buildPreview({
-      workspaceId: WS, toolName: 'update_task',
+      workspaceIds: [WS], toolName: 'update_task',
       args: { task_id: TASK, patch: { name: 'New name', status: 'closed' } },
     });
     expect(p.kind).toBe('update_task');
@@ -32,7 +32,7 @@ describe('buildPreview', () => {
 
   it('builds a create_task preview', async () => {
     const p = await buildPreview({
-      workspaceId: WS, toolName: 'create_task',
+      workspaceIds: [WS], toolName: 'create_task',
       args: { list_id: LIST, name: 'Brand new', due_date: '2026-05-08' },
     });
     expect(p.kind).toBe('create_task');
@@ -41,7 +41,7 @@ describe('buildPreview', () => {
 
   it('builds a delete_task preview with destructive flag', async () => {
     const p = await buildPreview({
-      workspaceId: WS, toolName: 'delete_task',
+      workspaceIds: [WS], toolName: 'delete_task',
       args: { task_id: TASK },
     });
     expect(p.kind).toBe('delete_task');
@@ -51,7 +51,7 @@ describe('buildPreview', () => {
 
   it('builds an add_comment preview', async () => {
     const p = await buildPreview({
-      workspaceId: WS, toolName: 'add_comment',
+      workspaceIds: [WS], toolName: 'add_comment',
       args: { task_id: TASK, text: 'Looks good to me.' },
     });
     expect(p.kind).toBe('add_comment');

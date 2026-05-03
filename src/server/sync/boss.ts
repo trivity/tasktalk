@@ -20,6 +20,6 @@ export const QUEUE_SYNC_TASK = 'sync-task';
 export const QUEUE_DRIFT = 'drift-reconcile';
 export const QUEUE_TOMBSTONE_PURGE = 'tombstone-purge';
 
-export type InitialSyncPayload = { userId: string };
+export type InitialSyncPayload = { userId: string; workspaceId?: string };
 export type SyncTaskPayload = { workspaceId: string; taskId: string };
 export type DriftPayload = { workspaceId: string };

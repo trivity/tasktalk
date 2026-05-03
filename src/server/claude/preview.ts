@@ -1,6 +1,6 @@
 import { db } from '../db/client.js';
 import { cuTasks, cuLists } from '../db/schema.js';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 
 export type PreviewField = { key: string; before: unknown; after: unknown };
 export type PreviewTarget = { type: 'task' | 'comment' | 'list'; id: string; name: string };
@@ -11,17 +11,23 @@ export type Preview =
   | { kind: 'delete_task'; target: PreviewTarget; fields: PreviewField[]; destructive: true }
   | { kind: 'add_comment'; target: PreviewTarget; fields: PreviewField[]; destructive: false };
 
+/**
+ * Build a write preview by reading the current state of the target task/list
+ * from the mirror. Looks across all of the user's workspaces — the resolution
+ * step (which workspace owns this id) happens here so callers don't need to
+ * pre-resolve.
+ */
 export async function buildPreview(opts: {
-  workspaceId: string;
+  workspaceIds: string[];
   toolName: string;
   args: Record<string, unknown>;
 }): Promise<Preview> {
-  const { workspaceId, toolName, args } = opts;
+  const { workspaceIds, toolName, args } = opts;
 
   if (toolName === 'update_task') {
     const taskId = String(args.task_id);
     const patch = (args.patch as Record<string, unknown>) ?? {};
-    const [task] = await db.select().from(cuTasks).where(and(eq(cuTasks.taskId, taskId), eq(cuTasks.workspaceId, workspaceId))).limit(1);
+    const [task] = await db.select().from(cuTasks).where(and(eq(cuTasks.taskId, taskId), inArray(cuTasks.workspaceId, workspaceIds))).limit(1);
     if (!task) throw new Error(`task not found in mirror: ${taskId}`);
     const fields: PreviewField[] = [];
     for (const [k, v] of Object.entries(patch)) {
@@ -33,16 +39,17 @@ export async function buildPreview(opts: {
 
   if (toolName === 'create_task') {
     const listId = String(args.list_id);
-    const [list] = await db.select().from(cuLists).where(and(eq(cuLists.id, listId), eq(cuLists.workspaceId, workspaceId))).limit(1);
+    const [list] = await db.select().from(cuLists).where(and(eq(cuLists.id, listId), inArray(cuLists.workspaceId, workspaceIds))).limit(1);
+    if (!list) throw new Error(`list not found in any of the user's workspaces: ${listId}`);
     const fields: PreviewField[] = Object.entries(args)
       .filter(([k]) => k !== 'list_id')
       .map(([k, v]) => ({ key: k, before: null, after: v }));
-    return { kind: 'create_task', target: { type: 'list', id: listId, name: list?.name ?? '(unknown list)' }, fields, destructive: false };
+    return { kind: 'create_task', target: { type: 'list', id: listId, name: list.name }, fields, destructive: false };
   }
 
   if (toolName === 'delete_task') {
     const taskId = String(args.task_id);
-    const [task] = await db.select().from(cuTasks).where(and(eq(cuTasks.taskId, taskId), eq(cuTasks.workspaceId, workspaceId))).limit(1);
+    const [task] = await db.select().from(cuTasks).where(and(eq(cuTasks.taskId, taskId), inArray(cuTasks.workspaceId, workspaceIds))).limit(1);
     if (!task) throw new Error(`task not found in mirror: ${taskId}`);
     return {
       kind: 'delete_task',
@@ -57,7 +64,7 @@ export async function buildPreview(opts: {
 
   if (toolName === 'add_comment') {
     const taskId = String(args.task_id);
-    const [task] = await db.select().from(cuTasks).where(and(eq(cuTasks.taskId, taskId), eq(cuTasks.workspaceId, workspaceId))).limit(1);
+    const [task] = await db.select().from(cuTasks).where(and(eq(cuTasks.taskId, taskId), inArray(cuTasks.workspaceId, workspaceIds))).limit(1);
     return {
       kind: 'add_comment',
       target: { type: 'task', id: taskId, name: task?.name ?? `(task ${taskId})` },

@@ -1,6 +1,6 @@
 import { db } from '../client.js';
 import { cuTasks, cuWorkspaces } from '../schema.js';
-import { and, eq, gte, lte, isNull, sql, type SQL, inArray } from 'drizzle-orm';
+import { and, gte, lte, isNull, sql, type SQL, inArray } from 'drizzle-orm';
 
 export type TaskFilters = {
   listId?: string;
@@ -30,10 +30,25 @@ export type SnapshotResult = {
 
 const MAX_RESULTS = 200;
 
-export async function querySnapshot(opts: { workspaceId: string; filters: TaskFilters }): Promise<SnapshotResult> {
-  const { workspaceId, filters } = opts;
-  const conds: SQL[] = [eq(cuTasks.workspaceId, workspaceId), isNull(cuTasks.deletedAt)];
-  if (filters.listId) conds.push(eq(cuTasks.listId, filters.listId));
+/**
+ * Query the mirror snapshot across one or more workspaces. Result `as_of` is
+ * the OLDEST `last_incremental_sync_at` among the queried workspaces, so the
+ * caller sees the worst-case staleness.
+ */
+export async function querySnapshot(opts: { workspaceIds: string[]; filters: TaskFilters }): Promise<SnapshotResult> {
+  const { workspaceIds, filters } = opts;
+  if (workspaceIds.length === 0) {
+    return {
+      data_source: 'snapshot',
+      as_of: new Date(0).toISOString(),
+      results: [],
+      truncated: false,
+      total_estimate: 0,
+    };
+  }
+
+  const conds: SQL[] = [inArray(cuTasks.workspaceId, workspaceIds), isNull(cuTasks.deletedAt)];
+  if (filters.listId) conds.push(sql`${cuTasks.listId} = ${filters.listId}`);
   if (filters.status?.length) conds.push(inArray(cuTasks.status, filters.status) as SQL);
   if (filters.assigneeId) conds.push(sql`${cuTasks.assignees} @> ${JSON.stringify([{ id: filters.assigneeId }])}::jsonb`);
   if (filters.dueBefore) conds.push(lte(cuTasks.dueDate, filters.dueBefore));
@@ -44,15 +59,20 @@ export async function querySnapshot(opts: { workspaceId: string; filters: TaskFi
   const truncated = rows.length > MAX_RESULTS;
   const slice = rows.slice(0, MAX_RESULTS);
 
-  const [ws] = await db
+  const wsRows = await db
     .select({ asOf: cuWorkspaces.lastIncrementalSyncAt })
     .from(cuWorkspaces)
-    .where(eq(cuWorkspaces.workspaceId, workspaceId))
-    .limit(1);
+    .where(inArray(cuWorkspaces.workspaceId, workspaceIds));
+  // Pick the OLDEST as_of (worst-case staleness). If any has never synced
+  // (null), treat as epoch.
+  const oldest = wsRows.reduce<Date>((acc, r) => {
+    const t = r.asOf ?? new Date(0);
+    return t.getTime() < acc.getTime() ? t : acc;
+  }, new Date());
 
   return {
     data_source: 'snapshot',
-    as_of: (ws?.asOf ?? new Date(0)).toISOString(),
+    as_of: oldest.toISOString(),
     results: slice.map((r) => ({
       task_id: r.taskId,
       name: r.name,

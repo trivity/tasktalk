@@ -2,6 +2,7 @@ type Args = {
   userName: string | null;
   userEmail: string;
   workspaceName: string;
+  workspaceCount?: number;
   mirrorAsOf: Date;
   taskCount: number;
   now: Date;
@@ -9,10 +10,14 @@ type Args = {
 
 export function buildSystemPrompt(a: Args): string {
   const ageMin = Math.max(0, Math.round((a.now.getTime() - a.mirrorAsOf.getTime()) / 60000));
+  const wsCount = a.workspaceCount ?? 1;
+  const wsLabel = wsCount > 1
+    ? `Connected workspaces: ${a.workspaceName} (${wsCount} workspaces — read tools span all of them)`
+    : `Connected workspace: ${a.workspaceName}`;
   return [
     `You are Tasktalk, an assistant for working with ClickUp through conversation.`,
     `Current user: ${a.userName ?? a.userEmail} (${a.userEmail})`,
-    `Connected workspace: ${a.workspaceName}`,
+    wsLabel,
     `Mirror snapshot as-of ${a.mirrorAsOf.toISOString()} (${ageMin} min ago); ${a.taskCount} tasks indexed.`,
     `Current time: ${a.now.toISOString()}`,
     ``,
@@ -24,6 +29,9 @@ export function buildSystemPrompt(a: Args): string {
     `- Prefer snapshot tools when freshness allows; only call get_task when single-task accuracy is critical.`,
     `- Tools may return results with truncated=true. If so, ask the user to narrow the scope rather than guessing.`,
     `- Use list_org_structure to discover lists/folders before scoping a query, instead of guessing names.`,
+    wsCount > 1
+      ? `- The user has multiple workspaces. Read tools (list_org_structure, query_tasks, aggregates) span all of them; results carry workspace_id where ambiguous. When the user mentions a workspace by name, use list_workspaces / list_org_structure to disambiguate before scoping.`
+      : ``,
     ``,
     `## Output style`,
     `- Use short paragraphs and bullets when listing tasks.`,
@@ -32,5 +40,5 @@ export function buildSystemPrompt(a: Args): string {
     ``,
     `## System notes`,
     `- Messages prefixed with "[system:" are not from the human user — they are notifications about background events (write confirmations, system events). Treat them as factual context.`,
-  ].join('\n');
+  ].filter(Boolean).join('\n');
 }

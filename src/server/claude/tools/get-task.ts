@@ -1,18 +1,51 @@
 import { TurnMcpPool, callMcpTool } from '../../mcp/client.js';
 import { upsertTask } from '../../sync/upsert.js';
+import { db } from '../../db/client.js';
+import { cuTasks } from '../../db/schema.js';
+import { and, eq, inArray } from 'drizzle-orm';
 
-export async function executeGetTask(workspaceId: string, taskId: string, pool: TurnMcpPool) {
-  const session = await pool.get();
-  const resp = await callMcpTool<{ task: Record<string, unknown> }>(session, 'clickup_get_task', { task_id: taskId });
-  if (resp?.task) {
-    try { await upsertTask(workspaceId, resp.task); } catch { /* non-fatal cache-back */ }
+export async function executeGetTask(workspaceIds: string[], taskId: string, pool: TurnMcpPool) {
+  if (workspaceIds.length === 0) {
+    return { data_source: 'live' as const, as_of: new Date().toISOString(), results: [], truncated: false };
   }
-  return {
-    data_source: 'live' as const,
-    as_of: new Date().toISOString(),
-    results: resp?.task ? [normalize(resp.task)] : [],
-    truncated: false,
-  };
+
+  // Resolve the owning workspace from the mirror first (fast path).
+  // Falls back to trying the first workspace if the task isn't mirrored yet.
+  const [mirrored] = await db
+    .select({ workspaceId: cuTasks.workspaceId })
+    .from(cuTasks)
+    .where(and(eq(cuTasks.taskId, taskId), inArray(cuTasks.workspaceId, workspaceIds)))
+    .limit(1);
+
+  // Order: mirrored workspace first if known, then the rest.
+  const order = mirrored
+    ? [mirrored.workspaceId, ...workspaceIds.filter((w) => w !== mirrored.workspaceId)]
+    : workspaceIds;
+
+  const session = await pool.get();
+  // get_task is workspace-scoped at the MCP layer. We attempt with each
+  // workspace in turn — first hit wins. If the task simply doesn't exist,
+  // every attempt errors out and we surface the last error.
+  let lastErr: unknown = null;
+  for (const wsId of order) {
+    try {
+      const resp = await callMcpTool<{ task: Record<string, unknown> }>(session, 'clickup_get_task', { task_id: taskId, workspace_id: wsId });
+      if (resp?.task) {
+        try { await upsertTask(wsId, resp.task); } catch { /* non-fatal */ }
+        return {
+          data_source: 'live' as const,
+          as_of: new Date().toISOString(),
+          results: [normalize(resp.task)],
+          truncated: false,
+        };
+      }
+    } catch (err) {
+      lastErr = err;
+      continue;
+    }
+  }
+  if (lastErr) throw lastErr;
+  return { data_source: 'live' as const, as_of: new Date().toISOString(), results: [], truncated: false };
 }
 
 function normalize(t: Record<string, unknown>) {

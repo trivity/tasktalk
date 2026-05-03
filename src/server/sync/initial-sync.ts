@@ -1,6 +1,6 @@
 import { db } from '../db/client.js';
 import { cuWorkspaces, clickupConnections } from '../db/schema.js';
-import { eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import { TurnMcpPool, callMcpTool } from '../mcp/client.js';
 import {
   upsertWorkspace, upsertSpace, upsertFolder, upsertList,
@@ -46,16 +46,6 @@ function asArray(value: unknown): Json[] {
   return [];
 }
 
-/**
- * The ClickUp MCP `clickup_get_workspace_hierarchy` response shape isn't
- * formally documented locally. We've seen plausible variants in the wild:
- *   - { workspace: { id, name }, spaces: [{ id, name, folders: [...], lists: [...] }] }
- *   - { team: { id, name }, spaces: [...] }
- *   - { id, name, spaces: [...] }
- *   - MCP envelope: { content: [{ type:'text', text:'<json above>' }] }
- * We probe each shape; if none match, we log the raw blob for diagnosis and
- * return an empty hierarchy so the caller can continue with a partial sync.
- */
 type ParsedHierarchy = {
   workspaceId: string | null;
   workspaceName: string | null;
@@ -78,9 +68,6 @@ function parseHierarchy(rawResp: unknown): ParsedHierarchy {
   const unwrapped = unwrapMcp(rawResp);
   const root = (unwrapped && typeof unwrapped === 'object' ? (unwrapped as Json) : {}) as Json;
 
-  // ClickUp's MCP returns: { hierarchy: { root: { id, name, children: [...] } } }
-  // where children carry a `type` discriminator: 'space' | 'folder' | 'list'.
-  // The workspace itself is the `root` node (no type).
   const hierarchy = (root.hierarchy && typeof root.hierarchy === 'object' ? (root.hierarchy as Json) : null);
   const treeRoot: Json | null = (() => {
     if (hierarchy && hierarchy.root && typeof hierarchy.root === 'object') return hierarchy.root as Json;
@@ -88,7 +75,6 @@ function parseHierarchy(rawResp: unknown): ParsedHierarchy {
     return null;
   })();
 
-  // Try the new "discriminated children tree" shape first.
   if (treeRoot) {
     const wsId = treeRoot.id != null ? String(treeRoot.id) : null;
     const wsName = typeof treeRoot.name === 'string' ? treeRoot.name : null;
@@ -115,7 +101,6 @@ function parseHierarchy(rawResp: unknown): ParsedHierarchy {
     return { workspaceId: wsId, workspaceName: wsName, spaces };
   }
 
-  // Fallbacks for other plausible shapes (kept as defense-in-depth).
   let wsId: string | null = null;
   let wsName: string | null = null;
   if (root.workspace && typeof root.workspace === 'object') {
@@ -166,11 +151,6 @@ function parseHierarchy(rawResp: unknown): ParsedHierarchy {
   return { workspaceId: wsId, workspaceName: wsName, spaces };
 }
 
-/**
- * Best-effort extraction of an array of "items" from any tool that may return
- * a list — it could be { fields: [...] }, { tasks: [...] }, { members: [...] },
- * a bare array, or wrapped in the MCP envelope.
- */
 function extractItems(resp: unknown, ...keys: string[]): Json[] {
   const unwrapped = unwrapMcp(resp);
   if (Array.isArray(unwrapped)) return unwrapped as Json[];
@@ -217,16 +197,48 @@ function detectMultiWorkspaceError(resp: unknown): string[] | null {
   return match[1]!.split(/[,\s]+/).map((s) => s.trim()).filter((s) => /^\d+$/.test(s));
 }
 
-export async function runInitialSync({ userId }: InitialSyncPayload): Promise<void> {
+/**
+ * Top-level entry. If `workspaceId` is provided, syncs only that workspace.
+ * Otherwise iterates ALL of the user's active connections.
+ */
+export async function runInitialSync(payload: InitialSyncPayload): Promise<void> {
+  const { userId, workspaceId } = payload;
+  if (workspaceId) {
+    await runInitialSyncForWorkspace(userId, workspaceId);
+    return;
+  }
+  const rows = await db
+    .select({ workspaceId: clickupConnections.workspaceId })
+    .from(clickupConnections)
+    .where(and(eq(clickupConnections.userId, userId), isNull(clickupConnections.tombstonedAt)));
+  if (rows.length === 0) {
+    console.warn(`[initial-sync] no active connections for user ${userId}`);
+    return;
+  }
+  for (const r of rows) {
+    try {
+      await runInitialSyncForWorkspace(userId, r.workspaceId);
+    } catch (err) {
+      // Don't let one workspace failure abort the others; log and continue.
+      logPartial(`workspace ${r.workspaceId} sync failed`, err);
+    }
+  }
+}
+
+/**
+ * Sync a single workspace for a single user. Resolves placeholder workspace ids
+ * and updates the corresponding clickup_connections row.
+ */
+export async function runInitialSyncForWorkspace(userId: string, workspaceIdArg: string): Promise<void> {
   const pool = new TurnMcpPool(userId);
   const session = await pool.get();
-  let workspaceId = session.workspaceId;
+  let workspaceId = workspaceIdArg;
+  // Force the session to use the explicit workspace id (not the first connection's id).
+  (session as unknown as { workspaceId: string }).workspaceId = workspaceId;
   const pacer = pacerForRateLimit(PACE_CALLS_PER_24H);
 
   try {
-    // 1. Workspace hierarchy — single call replaces list_spaces / list_folders /
-    //    list_folderless_lists. Args: probe with workspace_id when we already
-    //    have a real one; fall back to no-arg call for placeholder ids.
+    // 1. Workspace hierarchy.
     await pacer.acquire();
     const hierArgs: Record<string, unknown> = {};
     if (!workspaceId.startsWith('pending-')) hierArgs.workspace_id = workspaceId;
@@ -234,7 +246,6 @@ export async function runInitialSync({ userId }: InitialSyncPayload): Promise<vo
     try {
       rawHierarchy = await callMcpTool(session, 'clickup_get_workspace_hierarchy', hierArgs);
     } catch (err) {
-      // If the server rejected workspace_id (e.g. tool takes no args), retry empty.
       logPartial('clickup_get_workspace_hierarchy initial call failed; retrying with empty args', err);
       try {
         rawHierarchy = await callMcpTool(session, 'clickup_get_workspace_hierarchy', {});
@@ -244,10 +255,9 @@ export async function runInitialSync({ userId }: InitialSyncPayload): Promise<vo
       }
     }
 
-    // ClickUp's MCP rejects no-arg calls with a "Multiple workspaces available"
-    // error when the user has access to more than one. Parse the available IDs
-    // from the error and retry with the first (or the existing real workspace_id
-    // if we already have one). Future enhancement: workspace picker UI.
+    // If MCP rejected the call with "Multiple workspaces available", pick our id
+    // from that list (or first). For an explicit workspaceId arg, this is a
+    // safety net — once enumerateWorkspaces is wired, every row has a real id.
     const multi = detectMultiWorkspaceError(rawHierarchy);
     if (multi && multi.length > 0) {
       const pick = !workspaceId.startsWith('pending-') && multi.includes(workspaceId)
@@ -263,17 +273,16 @@ export async function runInitialSync({ userId }: InitialSyncPayload): Promise<vo
       logPartial('parseHierarchy could not extract workspace_id', new Error('no workspace_id in response'), rawHierarchy);
     }
 
-    // Resolve placeholder workspace_id from hierarchy if needed.
+    // Resolve placeholder workspace_id from hierarchy if needed. Only update the
+    // row matching THIS workspaceId (not all of the user's rows).
     if (workspaceId.startsWith('pending-') && parsed.workspaceId) {
       const realWsId = parsed.workspaceId;
       console.log(`[initial-sync] resolved placeholder workspace_id → ${realWsId} for user ${userId}`);
       await db
         .update(clickupConnections)
         .set({ workspaceId: realWsId })
-        .where(eq(clickupConnections.userId, userId));
+        .where(and(eq(clickupConnections.userId, userId), eq(clickupConnections.workspaceId, workspaceId)));
       workspaceId = realWsId;
-      // Update session.workspaceId in-place so any downstream callMcpTool args using
-      // session.workspaceId pick up the real id (TurnMcpPool re-uses a single session).
       (session as unknown as { workspaceId: string }).workspaceId = realWsId;
     }
 
@@ -281,12 +290,10 @@ export async function runInitialSync({ userId }: InitialSyncPayload): Promise<vo
     await upsertWorkspace(workspaceId, wsName);
     await db.update(cuWorkspaces).set({ syncState: { phase: 'spaces' } }).where(eq(cuWorkspaces.workspaceId, workspaceId));
 
-    // 2. Walk hierarchy: spaces → folders → lists. The hierarchy already
-    //    contains all of them, so no extra MCP calls needed for structure.
+    // 2. Walk hierarchy: spaces → folders → lists.
     const allLists: string[] = [];
     let listsTotal = 0;
     for (const space of parsed.spaces) {
-      // upsertSpace expects { id, name, archived }
       try {
         await upsertSpace(workspaceId, { id: space.id, name: space.name, archived: space.archived });
       } catch (err) {
@@ -345,7 +352,6 @@ export async function runInitialSync({ userId }: InitialSyncPayload): Promise<vo
     try {
       const membersResp = await callMcpTool(session, 'clickup_get_workspace_members', { workspace_id: workspaceId });
       const members = extractItems(membersResp, 'members', 'team_members', 'users');
-      // some shapes return { team: { members: [...] } }
       const teamMembers = (() => {
         if (members.length > 0) return members;
         const unwrapped = unwrapMcp(membersResp);
@@ -363,7 +369,6 @@ export async function runInitialSync({ userId }: InitialSyncPayload): Promise<vo
     // 4. Custom fields per list, then tasks per list (paginated).
     let listsDone = 0;
     for (const listId of allLists) {
-      // Custom field defs.
       await pacer.acquire();
       try {
         const cfResp = await callMcpTool(session, 'clickup_get_custom_fields', { list_id: listId });
@@ -372,13 +377,10 @@ export async function runInitialSync({ userId }: InitialSyncPayload): Promise<vo
           try { await upsertCustomField(workspaceId, listId, 'list', f); } catch (err) { logPartial('upsertCustomField', err); }
         }
       } catch (err) {
-        // not all lists expose custom-field defs; never fail the whole sync over this
         logPartial(`clickup_get_custom_fields list=${listId}`, err);
       }
 
-      // Tasks (paginated).
       let page = 0;
-      // soft cap to keep us out of pathological infinite loops if server doesn't honor last_page
       const MAX_PAGES = 200;
       while (page < MAX_PAGES) {
         await pacer.acquire();
@@ -404,10 +406,6 @@ export async function runInitialSync({ userId }: InitialSyncPayload): Promise<vo
       }
       listsDone++;
       if (listsDone % 5 === 0) {
-        // Stamp progress AND last_incremental_sync_at incrementally so that
-        // an interrupted run still leaves usable data in the mirror — the
-        // router uses last_incremental_sync_at to decide snapshot freshness,
-        // so without an incremental stamp we'd be stuck reporting 1970.
         await db
           .update(cuWorkspaces)
           .set({

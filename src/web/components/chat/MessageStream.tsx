@@ -1,3 +1,4 @@
+import { useEffect, useRef, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ToolCallPill } from './ToolCallPill.js';
@@ -15,6 +16,7 @@ type Props = {
   onConfirmResolved: () => void;
   onSendSuggestion: (text: string) => void;
   busy: boolean;
+  slashFooter?: ReactNode;
 };
 
 const markdownComponents = {
@@ -51,9 +53,17 @@ const markdownComponents = {
   hr: () => <hr className="border-border my-4" />,
 };
 
-export function MessageStream({ history, streaming, onConfirmResolved, onSendSuggestion, busy }: Props) {
+export function MessageStream({ history, streaming, onConfirmResolved, onSendSuggestion, busy, slashFooter }: Props) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const slashShown = !!slashFooter;
+  useEffect(() => {
+    if (slashShown && scrollRef.current) {
+      scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+    }
+  }, [slashShown]);
+
   return (
-    <div className="flex-1 overflow-y-auto px-6 py-8 space-y-5">
+    <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-8 space-y-5">
       {history.map((m) => {
         if (m.role === 'user') {
           return (
@@ -118,6 +128,7 @@ export function MessageStream({ history, streaming, onConfirmResolved, onSendSug
           ))}
         </div>
       )}
+      {slashFooter}
     </div>
   );
 }

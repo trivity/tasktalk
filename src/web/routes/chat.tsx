@@ -1,9 +1,9 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { PanelLeft, PanelRight, Pencil } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '../lib/rpc.js';
-import { slashCommands } from '../lib/slash-commands.js';
+import { slashCommands, filterSlashCommands, type SlashCommand } from '../lib/slash-commands.js';
 import { useConversations } from '../hooks/use-conversations.js';
 import { useMessageStream } from '../hooks/use-message-stream.js';
 import { useTaskContext } from '../hooks/use-task-context.js';
@@ -11,6 +11,7 @@ import { ConversationList } from '../components/sidebar/ConversationList.js';
 import { TaskContextPanel } from '../components/sidebar/TaskContextPanel.js';
 import { MessageStream } from '../components/chat/MessageStream.js';
 import { Composer } from '../components/chat/Composer.js';
+import { SlashMenu } from '../components/chat/SlashMenu.js';
 import { Nav } from '../components/Nav.js';
 
 type PersistedMessage = { id: string; role: string; content: any; createdAt: string };
@@ -152,6 +153,38 @@ export function Chat() {
     }
   }, []);
 
+  const [composerText, setComposerText] = useState('');
+  const [slashHighlight, setSlashHighlight] = useState(0);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
+
+  const slashMatch = composerText.match(/^\/(\S*)$/);
+  const slashFiltered = slashMatch ? filterSlashCommands(slashMatch[1] ?? '') : [];
+  const slashActive = !!slashMatch && slashFiltered.length > 0;
+
+  useEffect(() => {
+    if (slashHighlight >= slashFiltered.length) setSlashHighlight(0);
+  }, [slashFiltered.length, slashHighlight]);
+
+  const selectCommand = useCallback((cmd: SlashCommand) => {
+    if (cmd.kind === 'action') {
+      void onCommandAction(cmd.action!);
+      setComposerText('');
+      setSlashHighlight(0);
+      setTimeout(() => composerRef.current?.focus(), 0);
+      return;
+    }
+    const next = cmd.prompt ?? '';
+    setComposerText(next);
+    setSlashHighlight(0);
+    setTimeout(() => {
+      const ta = composerRef.current;
+      if (ta) {
+        ta.focus();
+        ta.setSelectionRange(next.length, next.length);
+      }
+    }, 0);
+  }, [onCommandAction]);
+
   return (
     <div className="flex flex-col h-screen bg-bg text-text">
       <Nav user={user} />
@@ -259,12 +292,34 @@ export function Chat() {
                   onConfirmResolved={onConfirmResolved}
                   onSendSuggestion={onSendSuggestion}
                   busy={!!streaming && !streaming.done}
+                  slashFooter={
+                    slashActive ? (
+                      <SlashMenu
+                        commands={slashFiltered}
+                        highlight={slashHighlight}
+                        onSelect={selectCommand}
+                        onHover={setSlashHighlight}
+                      />
+                    ) : null
+                  }
                 />
               )}
               <Composer
+                ref={composerRef}
+                value={composerText}
+                onChange={setComposerText}
                 disabled={!!streaming && !streaming.done}
                 onSend={onSend}
-                onCommandAction={onCommandAction}
+                slashState={
+                  slashActive
+                    ? {
+                        filtered: slashFiltered,
+                        highlight: slashHighlight,
+                        setHighlight: setSlashHighlight,
+                        selectCommand,
+                      }
+                    : null
+                }
               />
             </>
           )}

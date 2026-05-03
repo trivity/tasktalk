@@ -1,79 +1,56 @@
-import { useState, useRef, useEffect } from 'react';
+import { forwardRef } from 'react';
 import { ArrowUp } from 'lucide-react';
-import { filterSlashCommands, type SlashCommand } from '../../lib/slash-commands.js';
-import { SlashMenu } from './SlashMenu.js';
+import type { SlashCommand } from '../../lib/slash-commands.js';
 
-type Props = {
-  disabled: boolean;
-  onSend: (text: string) => void;
-  onCommandAction?: (action: 'refresh' | 'help') => void;
+export type SlashState = {
+  filtered: SlashCommand[];
+  highlight: number;
+  setHighlight: (idx: number) => void;
+  selectCommand: (cmd: SlashCommand) => void;
 };
 
-export function Composer({ disabled, onSend, onCommandAction }: Props) {
-  const [text, setText] = useState('');
-  const [highlight, setHighlight] = useState(0);
-  const taRef = useRef<HTMLTextAreaElement>(null);
+type Props = {
+  value: string;
+  onChange: (text: string) => void;
+  disabled: boolean;
+  onSend: (text: string) => void;
+  slashState: SlashState | null;
+};
 
-  // Open menu only while typing the slash-token (no whitespace yet).
-  const slashMatch = text.match(/^\/(\S*)$/);
-  const menuOpen = !!slashMatch;
-  const query = slashMatch ? slashMatch[1] : '';
-  const filtered = menuOpen ? filterSlashCommands(query) : [];
-
-  useEffect(() => {
-    if (highlight >= filtered.length) setHighlight(0);
-  }, [filtered.length, highlight]);
-
-  function selectCommand(cmd: SlashCommand) {
-    if (cmd.kind === 'action') {
-      onCommandAction?.(cmd.action!);
-      setText('');
-      setHighlight(0);
-      taRef.current?.focus();
-      return;
-    }
-    const next = cmd.prompt ?? '';
-    setText(next);
-    setHighlight(0);
-    setTimeout(() => {
-      const ta = taRef.current;
-      if (ta) {
-        ta.focus();
-        ta.setSelectionRange(next.length, next.length);
-      }
-    }, 0);
-  }
-
+export const Composer = forwardRef<HTMLTextAreaElement, Props>(function Composer(
+  { value, onChange, disabled, onSend, slashState },
+  ref,
+) {
   function submit() {
-    const trimmed = text.trim();
+    const trimmed = value.trim();
     if (trimmed && !disabled) {
       onSend(trimmed);
-      setText('');
-      setHighlight(0);
+      onChange('');
     }
   }
 
   function handleKey(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (menuOpen && filtered.length > 0) {
+    if (slashState && slashState.filtered.length > 0) {
+      const len = slashState.filtered.length;
       if (e.key === 'ArrowDown') {
         e.preventDefault();
-        setHighlight((h) => (h + 1) % filtered.length);
+        slashState.setHighlight((slashState.highlight + 1) % len);
         return;
       }
       if (e.key === 'ArrowUp') {
         e.preventDefault();
-        setHighlight((h) => (h - 1 + filtered.length) % filtered.length);
+        slashState.setHighlight((slashState.highlight - 1 + len) % len);
         return;
       }
       if (e.key === 'Enter' || e.key === 'Tab') {
         e.preventDefault();
-        const cmd = filtered[highlight];
-        if (cmd) selectCommand(cmd);
+        const cmd = slashState.filtered[slashState.highlight];
+        if (cmd) slashState.selectCommand(cmd);
         return;
       }
       if (e.key === 'Escape') {
         e.preventDefault();
-        setText('');
+        onChange('');
         return;
       }
     }
@@ -85,37 +62,27 @@ export function Composer({ disabled, onSend, onCommandAction }: Props) {
 
   return (
     <div className="px-6 py-4">
-      <div className="relative">
-        {menuOpen && filtered.length > 0 && (
-          <SlashMenu
-            commands={filtered}
-            highlight={highlight}
-            onSelect={selectCommand}
-            onHover={setHighlight}
-          />
-        )}
-        <div className="relative bg-surface rounded-lg border border-border focus-within:border-accent transition-colors duration-150">
-          <textarea
-            ref={taRef}
-            className="w-full bg-transparent rounded-lg p-3 pr-14 text-[15px] text-text placeholder:text-text-subtle resize-none outline-none"
-            rows={2}
-            placeholder="Ask about your tasks…  (type / for commands)"
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={handleKey}
-            disabled={disabled}
-          />
-          <button
-            type="button"
-            onClick={submit}
-            disabled={disabled || !text.trim()}
-            aria-label="Send message"
-            className="absolute right-2 bottom-2 w-8 h-8 rounded-full bg-accent hover:bg-accent-hover text-white flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
-          >
-            <ArrowUp className="w-4 h-4" />
-          </button>
-        </div>
+      <div className="relative bg-surface rounded-lg border border-border focus-within:border-accent transition-colors duration-150">
+        <textarea
+          ref={ref}
+          className="w-full bg-transparent rounded-lg p-3 pr-14 text-[15px] text-text placeholder:text-text-subtle resize-none outline-none"
+          rows={2}
+          placeholder="Ask about your tasks…  (type / for commands)"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={handleKey}
+          disabled={disabled}
+        />
+        <button
+          type="button"
+          onClick={submit}
+          disabled={disabled || !value.trim()}
+          aria-label="Send message"
+          className="absolute right-2 bottom-2 w-8 h-8 rounded-full bg-accent hover:bg-accent-hover text-white flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
+        >
+          <ArrowUp className="w-4 h-4" />
+        </button>
       </div>
     </div>
   );
-}
+});

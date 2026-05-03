@@ -1,6 +1,6 @@
 import { db } from '../client.js';
 import { cuTasks, cuWorkspaces } from '../schema.js';
-import { and, gte, lte, isNull, sql, type SQL, inArray } from 'drizzle-orm';
+import { and, gte, lte, isNull, or, sql, type SQL, inArray } from 'drizzle-orm';
 
 export type TaskFilters = {
   listId?: string;
@@ -49,7 +49,18 @@ export async function querySnapshot(opts: { workspaceIds: string[]; filters: Tas
 
   const conds: SQL[] = [inArray(cuTasks.workspaceId, workspaceIds), isNull(cuTasks.deletedAt)];
   if (filters.listId) conds.push(sql`${cuTasks.listId} = ${filters.listId}`);
-  if (filters.status?.length) conds.push(inArray(cuTasks.status, filters.status) as SQL);
+  if (filters.status?.length) {
+    // Mirror has many tasks with NULL status. Aggregate query treats NULL as
+    // open. Match that here: when caller asks for any open-like status, also
+    // include NULL rows. Only exclude NULL when the filter is purely closed.
+    const closedStatuses = ['closed', 'done', 'cancelled', 'complete', 'completed', 'archived'];
+    const wantsOpenLike = filters.status.some((s) => !closedStatuses.includes(s.toLowerCase()));
+    conds.push(
+      wantsOpenLike
+        ? (or(inArray(cuTasks.status, filters.status), isNull(cuTasks.status)) as SQL)
+        : (inArray(cuTasks.status, filters.status) as SQL),
+    );
+  }
   if (filters.assigneeId) conds.push(sql`${cuTasks.assignees} @> ${JSON.stringify([{ id: filters.assigneeId }])}::jsonb`);
   if (filters.dueBefore) conds.push(lte(cuTasks.dueDate, filters.dueBefore));
   if (filters.dueAfter) conds.push(gte(cuTasks.dueDate, filters.dueAfter));

@@ -273,3 +273,59 @@ export const userAiCredentials = pgTable(
     userProviderIdx: uniqueIndex('user_ai_creds_user_provider_idx').on(t.userId, t.provider),
   }),
 );
+
+// App-wide settings. Admin-only writable. Encrypted values use the same
+// AES-256-GCM helper as user_ai_credentials.api_key_enc.
+export const appSettings = pgTable('app_settings', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
+  isEncrypted: boolean('is_encrypted').notNull().default(false),
+  updatedBy: uuid('updated_by').references(() => users.id, { onDelete: 'set null' }),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type RoutineSchedule =
+  | { kind: 'daily'; time: string }
+  | { kind: 'weekly'; days: number[]; time: string }
+  | { kind: 'monthly'; dayOfMonth: number; time: string };
+
+export const routines = pgTable(
+  'routines',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    prompt: text('prompt').notNull(),
+    schedule: jsonb('schedule').$type<RoutineSchedule>().notNull(),
+    timezone: text('timezone').notNull().default('UTC'),
+    deliverChat: boolean('deliver_chat').notNull().default(true),
+    deliverEmail: boolean('deliver_email').notNull().default(false),
+    emailTo: text('email_to'),
+    enabled: boolean('enabled').notNull().default(true),
+    conversationId: uuid('conversation_id').notNull().references(() => conversations.id, { onDelete: 'cascade' }),
+    lastRunAt: timestamp('last_run_at', { withTimezone: true }),
+    nextRunAt: timestamp('next_run_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    userIdx: index('routines_user_idx').on(t.userId),
+    nextRunIdx: index('routines_next_run_idx').on(t.nextRunAt),
+  }),
+);
+
+export const routineRuns = pgTable(
+  'routine_runs',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    routineId: uuid('routine_id').notNull().references(() => routines.id, { onDelete: 'cascade' }),
+    status: text('status', { enum: ['running', 'done', 'error'] }).notNull(),
+    startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp('finished_at', { withTimezone: true }),
+    responseText: text('response_text'),
+    errorMessage: text('error_message'),
+  },
+  (t) => ({
+    routineIdx: index('routine_runs_routine_idx').on(t.routineId, t.startedAt),
+  }),
+);

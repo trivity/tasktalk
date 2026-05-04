@@ -4,7 +4,7 @@ export type SlashCommand = {
   description: string;
   kind: 'prompt' | 'action';
   prompt?: string;
-  action?: 'refresh' | 'help';
+  action?: 'refresh' | 'help' | 'newRoutine';
 };
 
 export const slashCommands: SlashCommand[] = [
@@ -20,6 +20,7 @@ export const slashCommands: SlashCommand[] = [
   { name: 'recent', label: '/recent', description: 'Recently updated tasks', kind: 'prompt', prompt: 'Show me recently updated tasks.' },
   { name: 'find', label: '/find', description: 'Search by task name', kind: 'prompt', prompt: 'Find tasks matching ' },
   { name: 'refresh', label: '/refresh', description: 'Sync ClickUp now', kind: 'action', action: 'refresh' },
+  { name: 'routine', label: '/routine', description: 'Create a recurring report', kind: 'action', action: 'newRoutine' },
 ];
 
 export function filterSlashCommands(query: string): SlashCommand[] {

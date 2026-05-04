@@ -77,4 +77,73 @@ export const api = {
     body: JSON.stringify({ provider, api_key, model_preference }),
   }),
   deleteAiCredential: (provider: string) => request<{ ok: true }>(`/api/auth/me/ai-credentials/${provider}`, { method: 'DELETE' }),
+
+  // Admin settings (admin-only)
+  getAdminSettings: () => request<{
+    resend_from: string | null;
+    resend_api_key_set: boolean;
+    routines_per_user_cap: number;
+    defaults: { routinesPerUserCap: number };
+  }>('/api/admin/settings'),
+  setResendApiKey: (value: string) => request<{ ok: true }>('/api/admin/settings/resend-api-key', {
+    method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ value }),
+  }),
+  deleteResendApiKey: () => request<{ ok: true }>('/api/admin/settings/resend-api-key', { method: 'DELETE' }),
+  setResendFrom: (value: string) => request<{ ok: true }>('/api/admin/settings/resend-from', {
+    method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ value }),
+  }),
+  setRoutinesCap: (value: number) => request<{ ok: true }>('/api/admin/settings/routines-cap', {
+    method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ value }),
+  }),
+
+  // Routines
+  listRoutines: () => request<{
+    routines: Array<{
+      id: string;
+      name: string;
+      prompt: string;
+      schedule: RoutineSchedule;
+      scheduleDescription: string;
+      timezone: string;
+      deliverChat: boolean;
+      deliverEmail: boolean;
+      emailTo: string | null;
+      enabled: boolean;
+      conversationId: string;
+      lastRunAt: string | null;
+      nextRunAt: string;
+      lastRun: { status: 'running' | 'done' | 'error'; startedAt: string; finishedAt: string | null; errorMessage: string | null } | null;
+    }>;
+  }>('/api/routines'),
+  createRoutine: (body: {
+    name: string;
+    prompt: string;
+    schedule: RoutineSchedule;
+    timezone: string;
+    deliverChat: boolean;
+    deliverEmail: boolean;
+    emailTo: string | null;
+    enabled: boolean;
+  }) => request<{ routine: { id: string } }>('/api/routines', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+  }),
+  updateRoutine: (id: string, body: Partial<{
+    name: string;
+    prompt: string;
+    schedule: RoutineSchedule;
+    timezone: string;
+    deliverChat: boolean;
+    deliverEmail: boolean;
+    emailTo: string | null;
+    enabled: boolean;
+  }>) => request<{ ok: true }>(`/api/routines/${id}`, {
+    method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+  }),
+  deleteRoutine: (id: string) => request<{ ok: true }>(`/api/routines/${id}`, { method: 'DELETE' }),
+  runRoutineNow: (id: string) => request<{ ok: true }>(`/api/routines/${id}/run-now`, { method: 'POST' }),
 };
+
+export type RoutineSchedule =
+  | { kind: 'daily'; time: string }
+  | { kind: 'weekly'; days: number[]; time: string }
+  | { kind: 'monthly'; dayOfMonth: number; time: string };

@@ -137,7 +137,7 @@ export function Chat() {
     void onSend(text);
   }, [id, history.length, conversations]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const onCommandAction = useCallback(async (action: 'refresh' | 'help') => {
+  const onCommandAction = useCallback(async (action: 'refresh' | 'help' | 'newRoutine') => {
     if (action === 'refresh') {
       try {
         await api.clickupSyncNow();
@@ -150,8 +150,12 @@ export function Chat() {
     if (action === 'help') {
       const lines = slashCommands.map((c) => `${c.label}  ${c.description}`).join('\n');
       toast(`Slash commands:\n${lines}`, { duration: 10000 });
+      return;
     }
-  }, []);
+    if (action === 'newRoutine') {
+      nav('/routines');
+    }
+  }, [nav]);
 
   const [composerText, setComposerText] = useState('');
   const [slashHighlight, setSlashHighlight] = useState(0);

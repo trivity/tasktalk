@@ -15,6 +15,7 @@ type Props = {
   disabled: boolean;
   onSend: (text: string) => void;
   slashState: SlashState | null;
+  onCommandAction?: (action: 'refresh' | 'help' | 'newRoutine') => void; // legacy prop, actions now flow through slashState.selectCommand
 };
 
 export const Composer = forwardRef<HTMLTextAreaElement, Props>(function Composer(

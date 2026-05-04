@@ -6,7 +6,9 @@ const schema = z.object({
   CLICKUP_OAUTH_CLIENT_ID: z.string().min(1),
   CLICKUP_OAUTH_CLIENT_SECRET: z.string().min(1),
   CLICKUP_WEBHOOK_SECRET: z.string().min(1),
-  RESEND_API_KEY: z.string().min(1),
+  // Optional. If unset, admin can configure Resend via Settings (preferred).
+  // Kept for backward compat with existing deployments.
+  RESEND_API_KEY: z.string().optional(),
   TOKEN_ENCRYPTION_KEY: z
     .string()
     .length(64, 'TOKEN_ENCRYPTION_KEY must be a 64-char hex string (32 bytes)'),

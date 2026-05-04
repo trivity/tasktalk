@@ -1,5 +1,5 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { MessageCircle, Settings as SettingsIcon, Users, LogOut } from 'lucide-react';
+import { MessageCircle, Settings as SettingsIcon, Users, LogOut, Repeat } from 'lucide-react';
 import { api } from '../lib/rpc.js';
 
 type Props = {
@@ -39,6 +39,7 @@ export function Nav({ user }: Props) {
           Tasktalk
         </Link>
         {link('/chat', 'Chat', MessageCircle)}
+        {link('/routines', 'Routines', Repeat)}
         {link('/settings', 'Settings', SettingsIcon)}
         {user?.isAdmin && link('/members', 'Members', Users)}
       </div>

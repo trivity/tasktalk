@@ -27,6 +27,13 @@ type ClickUpStatus = {
   }>;
 };
 
+type AdminSettings = {
+  resend_from: string | null;
+  resend_api_key_set: boolean;
+  routines_per_user_cap: number;
+  defaults: { routinesPerUserCap: number };
+};
+
 export function Settings() {
   const [user, setUser] = useState<{ email: string; name: string | null; isAdmin: boolean } | null>(null);
   const [cuStatusObj, setCuStatusObj] = useState<ClickUpStatus | null>(null);
@@ -35,13 +42,26 @@ export function Settings() {
   const [aiKey, setAiKey] = useState('');
   const [aiModel, setAiModel] = useState('');
   const [syncing, setSyncing] = useState(false);
+  const [adminSettings, setAdminSettings] = useState<AdminSettings | null>(null);
+  const [resendKey, setResendKey] = useState('');
+  const [resendFrom, setResendFrom] = useState('');
+  const [routinesCap, setRoutinesCap] = useState(20);
   const [params] = useSearchParams();
   const nav = useNavigate();
 
   const refreshCuStatus = () => api.clickupStatus().then((r) => setCuStatusObj(r as unknown as ClickUpStatus));
 
+  const refreshAdmin = () => api.getAdminSettings().then((r) => {
+    setAdminSettings(r);
+    setResendFrom(r.resend_from ?? '');
+    setRoutinesCap(r.routines_per_user_cap);
+  }).catch(() => { /* not admin or not configured yet */ });
+
   useEffect(() => {
-    api.me().then((r) => setUser(r.user)).catch(() => nav('/login'));
+    api.me().then((r) => {
+      setUser(r.user);
+      if (r.user.isAdmin) void refreshAdmin();
+    }).catch(() => nav('/login'));
     void refreshCuStatus();
     api.listAiCredentials().then((r) => {
       setAiCreds(r);
@@ -117,6 +137,50 @@ export function Settings() {
       toast.error(`Refresh failed: ${e.message}`);
     } finally {
       setSyncing(false);
+    }
+  }
+
+  async function saveResendKey() {
+    if (!resendKey.trim()) return;
+    try {
+      await api.setResendApiKey(resendKey.trim());
+      toast.success('Resend API key saved.');
+      setResendKey('');
+      await refreshAdmin();
+    } catch (e: any) {
+      toast.error(`Save failed: ${e?.message ?? 'unknown error'}`);
+    }
+  }
+
+  async function clearResendKey() {
+    if (!window.confirm('Clear the Resend API key? Routines that send email will stop working until a new key is set.')) return;
+    try {
+      await api.deleteResendApiKey();
+      toast.success('Resend API key cleared.');
+      await refreshAdmin();
+    } catch (e: any) {
+      toast.error(`Clear failed: ${e?.message ?? 'unknown error'}`);
+    }
+  }
+
+  async function saveResendFrom() {
+    if (!resendFrom.trim()) return;
+    try {
+      await api.setResendFrom(resendFrom.trim());
+      toast.success('Sender saved.');
+      await refreshAdmin();
+    } catch (e: any) {
+      toast.error(`Save failed: ${e?.message ?? 'unknown error'}`);
+    }
+  }
+
+  async function saveRoutinesCap() {
+    try {
+      await api.setRoutinesCap(routinesCap);
+      toast.success('Routines-per-user cap saved.');
+      await refreshAdmin();
+    } catch (e: any) {
+      toast.error(`Save failed: ${e?.message ?? 'unknown error'}`);
     }
   }
 
@@ -346,6 +410,92 @@ export function Settings() {
             <ThemeToggle />
           </div>
         </section>
+
+        {user.isAdmin && (
+          <section className="space-y-4 pb-8 border-b border-border">
+            <h2 className="text-[18px] font-semibold text-text">Admin · Email delivery (Resend)</h2>
+            <p className="text-sm text-text-muted">
+              Used by routines to deliver reports via email. Visible only to admins.
+            </p>
+
+            <div>
+              <label className="block text-xs text-text-muted mb-1.5 font-medium">Resend API key</label>
+              <div className="flex gap-2 items-center">
+                <input
+                  type="password"
+                  placeholder={adminSettings?.resend_api_key_set ? '•••••••• (set — re-enter to replace)' : 're_...'}
+                  className="bg-surface border border-border rounded-md p-2 flex-1 text-sm text-text placeholder:text-text-subtle outline-none focus:border-accent transition-colors duration-150"
+                  value={resendKey}
+                  onChange={(e) => setResendKey(e.target.value)}
+                />
+                <button
+                  onClick={saveResendKey}
+                  disabled={!resendKey}
+                  className="bg-accent hover:bg-accent-hover text-white rounded-md px-4 py-2 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-150"
+                >
+                  Save
+                </button>
+                {adminSettings?.resend_api_key_set && (
+                  <button
+                    onClick={clearResendKey}
+                    className="text-error hover:bg-error/10 rounded-md px-4 py-2 text-sm font-medium transition-colors duration-150"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+              <p className="text-xs text-text-subtle mt-1">
+                Get one at{' '}
+                <a href="https://resend.com/api-keys" target="_blank" rel="noopener noreferrer" className="text-accent underline hover:no-underline">resend.com/api-keys</a>.
+                Stored encrypted at rest.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-xs text-text-muted mb-1.5 font-medium">From address</label>
+              <div className="flex gap-2 items-center">
+                <input
+                  type="text"
+                  placeholder="Tasktalk <noreply@yourdomain.com>"
+                  className="bg-surface border border-border rounded-md p-2 flex-1 text-sm text-text placeholder:text-text-subtle outline-none focus:border-accent transition-colors duration-150"
+                  value={resendFrom}
+                  onChange={(e) => setResendFrom(e.target.value)}
+                />
+                <button
+                  onClick={saveResendFrom}
+                  disabled={!resendFrom.trim()}
+                  className="bg-accent hover:bg-accent-hover text-white rounded-md px-4 py-2 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-150"
+                >
+                  Save
+                </button>
+              </div>
+              <p className="text-xs text-text-subtle mt-1">
+                The sender domain must be verified in Resend. Format: <code className="bg-surface px-1 rounded font-mono">Display Name &lt;email@domain&gt;</code>.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-xs text-text-muted mb-1.5 font-medium">Routines per user (cap)</label>
+              <div className="flex gap-2 items-center">
+                <input
+                  type="number"
+                  min={1}
+                  max={1000}
+                  className="bg-surface border border-border rounded-md p-2 w-24 text-sm text-text outline-none focus:border-accent transition-colors duration-150"
+                  value={routinesCap}
+                  onChange={(e) => setRoutinesCap(Math.max(1, Math.min(1000, Number(e.target.value) || 1)))}
+                />
+                <button
+                  onClick={saveRoutinesCap}
+                  className="bg-accent hover:bg-accent-hover text-white rounded-md px-4 py-2 text-sm font-medium transition-colors duration-150"
+                >
+                  Save
+                </button>
+                <span className="text-xs text-text-subtle">default {adminSettings?.defaults.routinesPerUserCap ?? 20}</span>
+              </div>
+            </div>
+          </section>
+        )}
 
         {user.isAdmin && (
           <section className="space-y-3 pb-8 last:border-0">

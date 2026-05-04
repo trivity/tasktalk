@@ -43,6 +43,13 @@
       "when": 1777877941844,
       "tag": "0005_right_toro",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1777884230257,
+      "tag": "0006_stale_morlocks",
+      "breakpoints": true
     }
   ]
 }

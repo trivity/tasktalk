@@ -8,10 +8,17 @@ export function TaskContextPanel({ tasks, asOf }: { tasks: Task[]; asOf: string 
       </h4>
       {tasks.length === 0 && <p className="text-xs text-text-muted">No tasks referenced yet.</p>}
       {tasks.map((t) => (
-        <div key={t.id} className="rounded-md p-2 mb-1 text-xs hover:bg-surface-hover transition-colors duration-150">
-          <div className="font-medium text-text truncate">{t.name}</div>
-          <div className="text-[10px] text-text-subtle mt-0.5">{t.id}</div>
-        </div>
+        <a
+          key={t.id}
+          href={`https://app.clickup.com/t/${t.id}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="block rounded-md p-2 mb-1 text-xs hover:bg-surface-hover transition-colors duration-150"
+          title="Open in ClickUp"
+        >
+          <div className="font-medium text-text truncate group-hover:underline">{t.name}</div>
+          <div className="text-[10px] text-text-subtle mt-0.5 font-mono">{t.id}</div>
+        </a>
       ))}
       {asOf && (
         <div className="text-[10px] text-text-subtle mt-3 pt-3 border-t border-border italic">

@@ -1,8 +1,8 @@
 import { Hono } from 'hono';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import { db } from '../db/client.js';
-import { clickupConnections, cuWorkspaces } from '../db/schema.js';
-import { and, eq, isNull, inArray } from 'drizzle-orm';
+import { clickupConnections, cuWorkspaces, cuTasks, cuSpaces } from '../db/schema.js';
+import { and, eq, isNull, inArray, sql } from 'drizzle-orm';
 import { env } from '../env.js';
 import { encryptToken } from '../db/encrypt.js';
 import {
@@ -64,19 +64,43 @@ export const clickupOauthRoutes = new Hono()
     const refreshTokenEnc = encryptToken(refreshTokenPlain, env.TOKEN_ENCRYPTION_KEY);
     const expiresAt = new Date(Date.now() + (tokenResp.expires_in ?? 86400 * 30) * 1000);
 
-    // Insert one connection row per workspace. They share the same encrypted token.
-    // If discovery failed entirely we fall back to one placeholder row so the
-    // connection still exists and the worker can resolve it later.
+    // Upsert one connection row per workspace. They share the same encrypted
+    // token. If discovery failed entirely we fall back to one placeholder row
+    // so the connection still exists and the worker can resolve it later.
+    // The `(user_id, workspace_id) WHERE tombstoned_at IS NULL` partial unique
+    // index ensures re-running OAuth never produces duplicates: existing
+    // active rows get refreshed tokens, missing ones get inserted.
     const idsToInsert = workspaceIds.length > 0 ? workspaceIds : [`pending-${Date.now()}`];
     for (const wsId of idsToInsert) {
-      await db.insert(clickupConnections).values({
-        userId: u.id,
-        workspaceId: wsId,
-        accessTokenEnc,
-        refreshTokenEnc,
-        expiresAt,
-        scopes: tokenResp.scope ?? null,
-      });
+      const [existing] = await db
+        .select({ id: clickupConnections.id })
+        .from(clickupConnections)
+        .where(and(
+          eq(clickupConnections.userId, u.id),
+          eq(clickupConnections.workspaceId, wsId),
+          isNull(clickupConnections.tombstonedAt),
+        ))
+        .limit(1);
+      if (existing) {
+        await db
+          .update(clickupConnections)
+          .set({
+            accessTokenEnc,
+            refreshTokenEnc,
+            expiresAt,
+            scopes: tokenResp.scope ?? null,
+          })
+          .where(eq(clickupConnections.id, existing.id));
+      } else {
+        await db.insert(clickupConnections).values({
+          userId: u.id,
+          workspaceId: wsId,
+          accessTokenEnc,
+          refreshTokenEnc,
+          expiresAt,
+          scopes: tokenResp.scope ?? null,
+        });
+      }
     }
 
     const boss = await getBoss();
@@ -97,6 +121,20 @@ export const clickupOauthRoutes = new Hono()
       .set({ tombstonedAt: new Date() })
       .where(and(eq(clickupConnections.userId, u.id), isNull(clickupConnections.tombstonedAt)));
     return c.json({ ok: true });
+  })
+  .delete('/connections/:workspaceId', requireAuth, async (c) => {
+    const u = c.get('user');
+    const wsId = c.req.param('workspaceId');
+    if (!wsId) return c.json({ error: 'workspace_id_required' }, 400);
+    const result = await db
+      .update(clickupConnections)
+      .set({ tombstonedAt: new Date() })
+      .where(and(
+        eq(clickupConnections.userId, u.id),
+        eq(clickupConnections.workspaceId, wsId),
+        isNull(clickupConnections.tombstonedAt),
+      ));
+    return c.json({ ok: true, updated: (result as { rowCount?: number }).rowCount ?? 0 });
   })
   .get('/status', requireAuth, async (c) => {
     const u = c.get('user');
@@ -121,6 +159,24 @@ export const clickupOauthRoutes = new Hono()
       : [];
     const wsByid = new Map(wsRows.map((w) => [w.workspaceId, w]));
 
+    const taskCountRows = workspaceIds.length > 0
+      ? await db
+          .select({ workspaceId: cuTasks.workspaceId, count: sql<number>`count(*)::int` })
+          .from(cuTasks)
+          .where(and(inArray(cuTasks.workspaceId, workspaceIds), isNull(cuTasks.deletedAt)))
+          .groupBy(cuTasks.workspaceId)
+      : [];
+    const taskCountMap = new Map(taskCountRows.map((r) => [r.workspaceId, r.count]));
+
+    const spaceCountRows = workspaceIds.length > 0
+      ? await db
+          .select({ workspaceId: cuSpaces.workspaceId, count: sql<number>`count(*)::int` })
+          .from(cuSpaces)
+          .where(and(inArray(cuSpaces.workspaceId, workspaceIds), isNull(cuSpaces.deletedAt)))
+          .groupBy(cuSpaces.workspaceId)
+      : [];
+    const spaceCountMap = new Map(spaceCountRows.map((r) => [r.workspaceId, r.count]));
+
     const connections = rows.map((r) => {
       const ws = wsByid.get(r.workspaceId);
       return {
@@ -130,6 +186,8 @@ export const clickupOauthRoutes = new Hono()
         lastFullSyncAt: ws?.lastFullSyncAt ?? null,
         lastIncrementalSyncAt: ws?.lastIncrementalSyncAt ?? null,
         syncState: ws?.syncState ?? null,
+        taskCount: taskCountMap.get(r.workspaceId) ?? 0,
+        spaceCount: spaceCountMap.get(r.workspaceId) ?? 0,
       };
     });
 

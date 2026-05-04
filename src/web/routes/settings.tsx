@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '../lib/rpc.js';
 import { ThemeToggle } from '../components/ui/ThemeToggle.js';
@@ -22,6 +22,8 @@ type ClickUpStatus = {
     lastFullSyncAt: string | null;
     lastIncrementalSyncAt: string | null;
     syncState: { phase?: string; listsDone?: number; listsTotal?: number } | null;
+    taskCount: number;
+    spaceCount: number;
   }>;
 };
 
@@ -87,9 +89,22 @@ export function Settings() {
   }
 
   async function disconnect() {
+    if (!window.confirm('Disconnect ALL ClickUp workspaces? You can reconnect them later.')) return;
     await api.clickupDisconnect();
     void refreshCuStatus();
-    toast.success('ClickUp disconnected.');
+    toast.success('All ClickUp workspaces disconnected.');
+  }
+
+  async function disconnectWorkspace(workspaceId: string, name: string | null) {
+    const label = name && name !== 'Workspace' ? `"${name}"` : `workspace ${workspaceId}`;
+    if (!window.confirm(`Disconnect ${label}? Its synced tasks will stop being queryable here. You can reconnect later.`)) return;
+    try {
+      await api.clickupDisconnectWorkspace(workspaceId);
+      toast.success(`Disconnected ${label}.`);
+      await refreshCuStatus();
+    } catch (e: any) {
+      toast.error(`Disconnect failed: ${e?.message ?? 'unknown error'}`);
+    }
   }
 
   async function refreshSnapshot() {
@@ -237,50 +252,81 @@ export function Settings() {
           </div>
         </section>
 
-        <section className="space-y-3 pb-8 border-b border-border">
-          <h2 className="text-[18px] font-semibold text-text">ClickUp connection</h2>
+        <section className="space-y-4 pb-8 border-b border-border">
+          <div className="flex items-baseline justify-between">
+            <h2 className="text-[18px] font-semibold text-text">ClickUp workspaces</h2>
+            {connected && (
+              <span className="text-xs text-text-subtle">
+                {cuStatusObj?.connections.length ?? 0} connected
+              </span>
+            )}
+          </div>
           {connected ? (
             <>
-              <ul className="space-y-2">
-                {(cuStatusObj?.connections ?? []).map((conn) => (
-                  <li key={conn.workspaceId} className="text-sm text-text-muted">
-                    <span className="font-medium text-text">{conn.name ?? 'Workspace'}</span>
-                    <span className="text-text-subtle"> (id {conn.workspaceId})</span>
-                    {conn.pending ? (
-                      <span className="ml-2 text-warning">· pending workspace resolution</span>
-                    ) : conn.lastIncrementalSyncAt ? (
-                      <>
-                        <span className="ml-2">· Last sync: {new Date(conn.lastIncrementalSyncAt).toLocaleString()}</span>
-                        {conn.syncState?.phase && conn.syncState.phase !== 'done' && (
-                          <span className="ml-2 text-warning">
-                            · {conn.syncState.phase} ({conn.syncState.listsDone ?? 0}/{conn.syncState.listsTotal ?? '?'} lists)
-                          </span>
-                        )}
-                      </>
-                    ) : (
-                      <span className="ml-2 text-warning">· never synced</span>
-                    )}
-                  </li>
-                ))}
+              <ul className="divide-y divide-border border border-border rounded-md overflow-hidden">
+                {(cuStatusObj?.connections ?? []).map((conn) => {
+                  const inProgress = conn.syncState?.phase && conn.syncState.phase !== 'done';
+                  const subline = conn.pending
+                    ? 'pending workspace resolution'
+                    : inProgress
+                      ? `${conn.syncState!.phase} (${conn.syncState!.listsDone ?? 0}/${conn.syncState!.listsTotal ?? '?'} lists)`
+                      : conn.lastIncrementalSyncAt
+                        ? `Last sync ${new Date(conn.lastIncrementalSyncAt).toLocaleString()}`
+                        : 'Never synced';
+                  return (
+                    <li key={conn.workspaceId} className="px-4 py-3 flex items-center gap-4">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-baseline gap-2">
+                          <span className="font-medium text-text truncate">{conn.name ?? 'Workspace'}</span>
+                          <span className="text-xs text-text-subtle font-mono">id {conn.workspaceId}</span>
+                        </div>
+                        <div className="text-xs text-text-muted mt-0.5">
+                          <span className={inProgress || conn.pending ? 'text-warning' : ''}>{subline}</span>
+                          {!conn.pending && (
+                            <>
+                              <span className="mx-1.5 text-text-subtle">·</span>
+                              <span>{conn.spaceCount} {conn.spaceCount === 1 ? 'space' : 'spaces'}</span>
+                              <span className="mx-1.5 text-text-subtle">·</span>
+                              <span>{conn.taskCount} {conn.taskCount === 1 ? 'task' : 'tasks'}</span>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => disconnectWorkspace(conn.workspaceId, conn.name)}
+                        className="text-error hover:bg-error/10 rounded-md px-3 py-1.5 text-xs font-medium transition-colors duration-150 flex-shrink-0"
+                      >
+                        Disconnect
+                      </button>
+                    </li>
+                  );
+                })}
               </ul>
-              <div className="flex gap-2 items-center">
+              <div className="flex gap-2 items-center flex-wrap">
+                <a
+                  href="/api/clickup/connect"
+                  className="bg-accent hover:bg-accent-hover text-white rounded-md px-4 py-2 text-sm font-medium inline-flex items-center gap-2 transition-colors duration-150"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Add another workspace</span>
+                </a>
                 <button
                   onClick={refreshSnapshot}
                   disabled={syncing}
-                  className="bg-accent hover:bg-accent-hover text-white rounded-md px-4 py-2 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2 transition-colors duration-150"
+                  className="bg-surface hover:bg-surface-hover text-text border border-border rounded-md px-4 py-2 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2 transition-colors duration-150"
                 >
                   <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
-                  <span>{syncing ? 'Refreshing…' : 'Refresh snapshot'}</span>
+                  <span>{syncing ? 'Refreshing…' : 'Refresh all'}</span>
                 </button>
                 <button
                   onClick={disconnect}
                   className="text-error hover:bg-error/10 rounded-md px-4 py-2 text-sm font-medium transition-colors duration-150"
                 >
-                  Disconnect
+                  Disconnect all
                 </button>
               </div>
               <p className="text-xs text-text-subtle">
-                Refresh re-pulls every connected workspace's tree, members, and tasks from ClickUp. Can take a minute or two for large workspaces.
+                Click <strong>Add another workspace</strong> to authorize a workspace ClickUp didn't include in your original grant — on the ClickUp approval screen, tick the workspace(s) you want to add. Existing connections stay intact.
               </p>
             </>
           ) : (

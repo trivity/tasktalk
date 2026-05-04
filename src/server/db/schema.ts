@@ -1,4 +1,5 @@
 import { pgTable, uuid, text, timestamp, boolean, integer, bigint, index, uniqueIndex, jsonb, primaryKey, date } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 
 export const users = pgTable(
   'users',
@@ -52,7 +53,12 @@ export const clickupConnections = pgTable(
     tombstonedAt: timestamp('tombstoned_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => ({ userIdx: index('cu_conn_user_idx').on(t.userId) }),
+  (t) => ({
+    userIdx: index('cu_conn_user_idx').on(t.userId),
+    userWsActiveIdx: uniqueIndex('cu_conn_user_ws_active_idx')
+      .on(t.userId, t.workspaceId)
+      .where(sql`${t.tombstonedAt} IS NULL`),
+  }),
 );
 
 export const cuWorkspaces = pgTable('cu_workspaces', {

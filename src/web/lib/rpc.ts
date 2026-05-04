@@ -38,9 +38,13 @@ export const api = {
       lastFullSyncAt: string | null;
       lastIncrementalSyncAt: string | null;
       syncState: { phase?: string; listsDone?: number; listsTotal?: number } | null;
+      taskCount: number;
+      spaceCount: number;
     }>;
   }>('/api/clickup/status'),
   clickupDisconnect: () => request<{ ok: true }>('/api/clickup/disconnect', { method: 'POST' }),
+  clickupDisconnectWorkspace: (workspaceId: string) =>
+    request<{ ok: true }>(`/api/clickup/connections/${encodeURIComponent(workspaceId)}`, { method: 'DELETE' }),
   clickupSyncNow: () => request<{ ok: true }>('/api/clickup/sync-now', { method: 'POST' }),
   listConversations: () => request<{ conversations: Array<{ id: string; title: string; lastMessageAt: string }> }>('/api/conversations'),
   createConversation: () => request<{ conversation: { id: string; title: string } }>('/api/conversations', { method: 'POST' }),

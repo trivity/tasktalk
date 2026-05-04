@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX IF NOT EXISTS "cu_conn_user_ws_active_idx" ON "clickup_connections" USING btree ("user_id","workspace_id") WHERE "clickup_connections"."tombstoned_at" IS NULL;
